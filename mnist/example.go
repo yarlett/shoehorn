@@ -13,10 +13,10 @@ func main() {
 	fmt.Printf("Took %v to create data set of %d objects.\n", time.Now().Sub(t1), len(sh.ObjectIDs()))
 
 	// Learning parameters.
-	knn, alpha, lr, maxepochs := 1000, 0.01, 0.01, 100
+	knn, alpha, lr, maxepochs, decay := 1000, 0.01, 25.0, 250, "exp"
 
 	// Learn locations based on parameters.
-	sh.Learn(knn, alpha, lr, maxepochs)
+	sh.Learn(knn, alpha, lr, maxepochs, decay)
 
 	// Write learned locations to output file.
 	sh.WriteLocations("mnist_locations.csv")

@@ -25,5 +25,4 @@ type GradientInfo struct {
 	object_ix int
 	gradient  []float64
 	error     float64
-	lr        float64
 }

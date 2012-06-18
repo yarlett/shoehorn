@@ -57,7 +57,7 @@ func (sh *Shoehorn) Store(object string, feature string, value float64) {
 // Learning method.
 //
 
-func (sh *Shoehorn) Learn(knn int, alpha float64, lr float64, maxepochs int) {
+func (sh *Shoehorn) Learn(knn int, alpha float64, lr float64, maxepochs int, decay string) {
 	var (
 		epoch, object_ix, chanctr, j                                int
 		mE0, mE, mG, magG, l2_coeff, exag, uselr, updatej, momentum float64
@@ -77,7 +77,7 @@ func (sh *Shoehorn) Learn(knn int, alpha float64, lr float64, maxepochs int) {
 	// Initialize learning parameters.
 	exag = 1.0
 	l2_coeff = 0.00
-	momentum = 0.25
+	momentum = 0.5
 	uselr = lr
 	// Iterate over epochs of learning.
 	T = time.Now()
@@ -99,7 +99,7 @@ func (sh *Shoehorn) Learn(knn int, alpha float64, lr float64, maxepochs int) {
 		gradient_channel = make(chan GradientInfo, len(sh.objects))
 		// Calculate gradient information for all objects using goroutines.
 		for object_ix = 0; object_ix < len(sh.objects); object_ix++ {
-			go sh.GradientPow(object_ix, sh.locs[object_ix], knn, alpha, uselr, l2_coeff, exag, gradient_channel)
+			go sh.Gradient(object_ix, sh.locs[object_ix], knn, alpha, l2_coeff, exag, decay, gradient_channel)
 		}
 		// Collect all the gradient information from the gradient channel.
 		G = make([]GradientInfo, 0)
@@ -151,43 +151,11 @@ func (sh *Shoehorn) Learn(knn int, alpha float64, lr float64, maxepochs int) {
 	}
 }
 
-// //
-// // Error method.
-// //
-
-// func (sh *Shoehorn) Error(object_ix int, object_loc []float64, knn int, alpha float64, l2_coeff float64, exag float64) (E float64) {
-// 	var (
-// 		j       int
-// 		q, Q, W float64
-// 		N       Weights
-// 	)
-// 	// Get nearest neighbors and sum of weights.
-// 	N, W = sh.NeighborsExp(object_ix, object_loc, knn)
-// 	// Iterate over features in the object.
-// 	for feature_ix, p := range sh.objects[object_ix].data {
-// 		p *= exag
-// 		// Compute weighted sum over the nearest neighbors.
-// 		Q = 0.0
-// 		for _, n := range N {
-// 			Q += n.weight * sh.objects[n.object_ix].data[feature_ix]
-// 		}
-// 		// Finalize the reconstructed probability estimate.
-// 		q = (alpha * p) + ((1.0 - alpha) * (Q / W))
-// 		// Update the error.
-// 		E += (p * (math.Log(p) - math.Log(q)))
-// 	}
-// 	// Add distance from origin penalty.
-// 	for j = 0; j < sh.ndims; j++ {
-// 		E += (l2_coeff * object_loc[j] * object_loc[j])
-// 	}
-// 	return
-// }
-
 //
 // Gradient method.
 //
 
-func (sh *Shoehorn) GradientExp(object_ix int, object_loc []float64, knn int, alpha float64, lr float64, l2_coeff float64, exag float64, gradient_channel chan GradientInfo) {
+func (sh *Shoehorn) Gradient(object_ix int, object_loc []float64, knn int, alpha float64, l2_coeff float64, exag float64, decay string, gradient_channel chan GradientInfo) {
 	var (
 		j, feature_ix             int
 		W, E, p, q, Q, tmp1, tmp2 float64
@@ -200,7 +168,7 @@ func (sh *Shoehorn) GradientExp(object_ix int, object_loc []float64, knn int, al
 	T1 = make([]float64, sh.ndims)
 	T2 = make([]float64, sh.ndims)
 	// Get nearest neighbors and sum of weights.
-	N, W = sh.NeighborsExp(object_ix, object_loc, knn)
+	N, W = sh.Neighbors(object_ix, object_loc, knn, decay)
 	// Iterate over features of object.
 	for feature_ix, p = range sh.objects[object_ix].data {
 		// Account for exaggeration factor.
@@ -211,14 +179,26 @@ func (sh *Shoehorn) GradientExp(object_ix int, object_loc []float64, knn int, al
 			T1[j], T2[j] = 0.0, 0.0
 		}
 		// Iterate over nearest neighbors and update statistics.
-		for _, n = range N {
-			Q += n.weight * sh.objects[n.object_ix].data[feature_ix]
-			tmp1 = n.weight / n.distance
-			for j = 0; j < sh.ndims; j++ {
-				tmp2 = (sh.locs[n.object_ix][j] - object_loc[j]) * tmp1
-				T1[j] += tmp2 * sh.objects[n.object_ix].data[feature_ix]
-				T2[j] += tmp2
+		if decay == "exp" {
+			for _, n = range N {
+				Q += n.weight * sh.objects[n.object_ix].data[feature_ix]
+				tmp1 = n.weight / n.distance
+				for j = 0; j < sh.ndims; j++ {
+					tmp2 = (sh.locs[n.object_ix][j] - object_loc[j]) * tmp1
+					T1[j] += tmp2 * sh.objects[n.object_ix].data[feature_ix]
+					T2[j] += tmp2
+				}
 			}
+		} else {
+			for _, n = range N {
+				Q += n.weight * sh.objects[n.object_ix].data[feature_ix]
+				for j = 0; j < sh.ndims; j++ {
+					tmp1 = (sh.locs[n.object_ix][j] - object_loc[j]) * math.Pow(1.0 + n.distance, -2.0) / n.distance
+					// tmp1 = (sh.locs[n.object_ix][j] - object_loc[j]) * math.Pow(1.0 + n.distance, -2.0) * math.Pow(n.d, -0.5)
+					T1[j] += tmp1 * sh.objects[n.object_ix].data[feature_ix]
+					T2[j] += tmp1
+				}
+			}			
 		}
 		// Set the reconstruction probability.
 		q = (alpha * p) + ((1.0 - alpha) * (Q / W))
@@ -247,69 +227,7 @@ func (sh *Shoehorn) GradientExp(object_ix int, object_loc []float64, knn int, al
 	// }
 
 	// Return gradient information.
-	gradient_channel <- GradientInfo{object_ix: object_ix, gradient: G, error: E, lr: lr}
-}
-
-func (sh *Shoehorn) GradientPow(object_ix int, object_loc []float64, knn int, alpha float64, lr float64, l2_coeff float64, exag float64, gradient_channel chan GradientInfo) {
-	var (
-		j, feature_ix int
-		W, E, p, q, Q, tmp float64
-		G, T1, T2     []float64
-		N             Weights
-		n             WeightPair
-	)
-	// Perform initializations.
-	G = make([]float64, sh.ndims)
-	T1 = make([]float64, sh.ndims)
-	T2 = make([]float64, sh.ndims)
-	// Get nearest neighbors and sum of weights.
-	N, W = sh.NeighborsPow(object_ix, object_loc, knn)
-	// Iterate over features of object.
-	for feature_ix, p = range sh.objects[object_ix].data {
-		// Account for exaggeration factor.
-		p *= exag
-		// Reset values of accumulating terms.
-		Q = 0.0
-		for j = 0; j < sh.ndims; j++ {
-			T1[j], T2[j] = 0.0, 0.0
-		}
-		// Iterate over nearest neighbors and update statistics.
-		for _, n = range N {
-			Q += n.weight * sh.objects[n.object_ix].data[feature_ix]
-			for j = 0; j < sh.ndims; j++ {
-				tmp = (sh.locs[n.object_ix][j] - object_loc[j]) * math.Pow(math.Pow(n.d, 0.5) + 1.0, -2.0) * math.Pow(n.d, -0.5)
-				T1[j] += tmp * sh.objects[n.object_ix].data[feature_ix]
-				T2[j] += tmp
-			}
-		}
-		// Set the reconstruction probability.
-		q = (alpha * p) + ((1.0 - alpha) * (Q / W))
-		// Update gradient information.
-		for j = 0; j < sh.ndims; j++ {
-			G[j] += ((alpha - 1.0) * p / q) * (((T1[j] * W) - (Q * T2[j])) / (W * W))
-		}
-		// Update the error.
-		E += (p * (math.Log(p) - math.Log(q)))
-	}
-
-	// // Add distance penalty to gradient.
-	// ssd := 0.0
-	// for j = 0; j < sh.ndims; j++ {
-	// 	ssd += math.Pow(object_loc[j], 2.0)
-	// }
-	// E += l2_coeff * math.Pow(ssd, 0.5)
-	// for j = 0; j < sh.ndims; j++ {
-	// 	G[j] += l2_coeff * object_loc[j] * math.Pow(ssd, -0.5)
-	// }
-
-	// // Add distance penalty to gradient.
-	// for j = 0; j < sh.ndims; j++ {
-	// 	E += (l2_coeff * object_loc[j] * object_loc[j])
-	// 	G[j] += (2.0 * l2_coeff * object_loc[j])
-	// }
-
-	// Return gradient information.
-	gradient_channel <- GradientInfo{object_ix: object_ix, gradient: G, error: E, lr: lr}
+	gradient_channel <- GradientInfo{object_ix: object_ix, gradient: G, error: E}
 }
 
 //
@@ -323,8 +241,8 @@ func (sh *Shoehorn) ObjectIDs() (object_ids []int) {
 	return
 }
 
-func (sh *Shoehorn) NeighborsExp(object_ix int, object_loc []float64, knn int) (N Weights, W float64) {
-	N = sh.WeightsExp(object_ix, object_loc)
+func (sh *Shoehorn) Neighbors(object_ix int, object_loc []float64, knn int, decay string) (N Weights, W float64) {
+	N = sh.Weights(object_ix, object_loc, decay)
 	if (knn > 0) && (knn < len(N)) {
 		N = N[:knn]
 	}
@@ -334,63 +252,33 @@ func (sh *Shoehorn) NeighborsExp(object_ix int, object_loc []float64, knn int) (
 	return
 }
 
-func (sh *Shoehorn) NeighborsPow(object_ix int, object_loc []float64, knn int) (N Weights, W float64) {
-	N = sh.WeightsPow(object_ix, object_loc)
-	if (knn > 0) && (knn < len(N)) {
-		N = N[:knn]
-	}
-	for _, n := range N {
-		W += n.weight
-	}
-	return
-}
-
-func (sh *Shoehorn) WeightsExp(object_ix int, object_loc []float64) (weights Weights) {
+func (sh *Shoehorn) Weights(object_ix int, object_loc []float64, decay string) (weights Weights) {
 	var (
-		w *WeightPair
-		o int
+		w    WeightPair
+		o, j int
+		d    float64
 	)
-	for o = 0; o < len(sh.objects); o++ {
-		w = new(WeightPair)
-		// Set the object.
-		w.object_ix = o
-		// Set distance.
-		w.d = 0.0
-		for j := 0; j < sh.ndims; j++ {
-			w.d += math.Pow(object_loc[j]-sh.locs[o][j], 2.0)
-		}
-		w.distance = math.Pow(w.d, 0.5)
-		// Set weight.
-		w.weight = math.Exp(-w.distance)
-		// Store weight information (don't count a point as its own neighbor).
-		if w.distance > 0.0 {
-			weights = append(weights, *w)
+	// Set weight function depending on decay string.
+	var weight_function = func(distance float64) float64 {
+		return math.Exp(-distance)
+	}
+	if decay == "pow" {
+		weight_function = func(distance float64) float64 {
+			return 1.0 / (1.0 + distance)
 		}
 	}
-	sort.Sort(weights)
-	return
-}
-
-func (sh *Shoehorn) WeightsPow(object_ix int, object_loc []float64) (weights Weights) {
-	var (
-		w *WeightPair
-		o int
-	)
+	// Set distances and weights.
 	for o = 0; o < len(sh.objects); o++ {
-		w = new(WeightPair)
-		// Set the object.
-		w.object_ix = o
-		// Set distance.
-		w.d = 0.0
-		for j := 0; j < sh.ndims; j++ {
-			w.d += math.Pow(object_loc[j]-sh.locs[o][j], 2.0)
+		// Calculate sum of squared distances.
+		d = 0.0
+		for j = 0; j < sh.ndims; j++ {
+			d += math.Pow(object_loc[j]-sh.locs[o][j], 2.0)
 		}
-		w.distance = math.Pow(w.d, 0.5)
-		// Set weight.
-		w.weight = math.Pow(1.0 + w.distance, -1.0)
-		// Store weight information (don't count a point as its own neighbor).
-		if w.distance > 0.0 {
-			weights = append(weights, *w)
+		// If the point isn't directly on top record it as a neighbor.
+		if d > 0.0 {
+			w = WeightPair{object_ix: o, d: d, distance: math.Pow(d, 0.5)}
+			w.weight = weight_function(w.distance)
+			weights = append(weights, w)
 		}
 	}
 	sort.Sort(weights)
