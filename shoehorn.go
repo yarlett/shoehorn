@@ -75,16 +75,16 @@ func (sh *Shoehorn) Learn(knn int, alpha float64, lr float64, maxepochs int, dec
 	numprocs := runtime.NumCPU()
 	runtime.GOMAXPROCS(numprocs)
 	// Initialize learning parameters.
-	exag = 1.0
-	l2_coeff = 0.00
-	momentum = 0.5
+	exag = 4.0
+	l2_coeff = 0.2
+	momentum = 0.1
 	uselr = lr
 	// Iterate over epochs of learning.
 	T = time.Now()
 	for epoch, mG = 0, math.MaxFloat64; epoch < maxepochs; epoch++ {
 		t = time.Now()
 		// Switch to later learning parameters if appropriate.
-		if epoch == maxepochs/1 {
+		if epoch == maxepochs/2 {
 			exag = 1.0
 			l2_coeff = 0.0
 			momentum = 0.8
@@ -170,63 +170,70 @@ func (sh *Shoehorn) Gradient(object_ix int, object_loc []float64, knn int, alpha
 	// Get nearest neighbors and sum of weights.
 	N, W = sh.Neighbors(object_ix, object_loc, knn, decay)
 	// Iterate over features of object.
-	for feature_ix, p = range sh.objects[object_ix].data {
-		// Account for exaggeration factor.
-		p *= exag
-		// Reset values of accumulating terms.
-		Q = 0.0
-		for j = 0; j < sh.ndims; j++ {
-			T1[j], T2[j] = 0.0, 0.0
-		}
-		// Iterate over nearest neighbors and update statistics.
-		if decay == "exp" {
+	if decay == "exp" {
+		for feature_ix, p = range sh.objects[object_ix].data {
+			// Account for exaggeration factor.
+			p *= exag
+			// Reset values of accumulating terms.
+			Q = 0.0
+			for j = 0; j < sh.ndims; j++ {
+				T1[j], T2[j] = 0.0, 0.0
+			}
+			// Calculate exponential gradient terms.
 			for _, n = range N {
 				Q += n.weight * sh.objects[n.object_ix].data[feature_ix]
 				tmp1 = n.weight / n.distance
 				for j = 0; j < sh.ndims; j++ {
-					tmp2 = (sh.locs[n.object_ix][j] - object_loc[j]) * tmp1
+					tmp2 = tmp1 * (sh.locs[n.object_ix][j] - object_loc[j])
 					T1[j] += tmp2 * sh.objects[n.object_ix].data[feature_ix]
 					T2[j] += tmp2
 				}
 			}
-		} else {
+			// Set the reconstruction probability.
+			q = (alpha * p) + ((1.0 - alpha) * (Q / W))
+			// Update gradient information.
+			for j = 0; j < sh.ndims; j++ {
+				G[j] += ((alpha - 1.0) * p / q) * (((T1[j] * W) - (Q * T2[j])) / (W * W))
+			}
+			// Update the error.
+			E += (p * (math.Log(p) - math.Log(q)))
+		}
+	} else {
+		for feature_ix, p = range sh.objects[object_ix].data {
+			// Account for exaggeration factor.
+			p *= exag
+			// Reset values of accumulating terms.
+			Q = 0.0
+			for j = 0; j < sh.ndims; j++ {
+				T1[j], T2[j] = 0.0, 0.0
+			}
+			// Calculate power-law gradient terms.
 			for _, n = range N {
 				Q += n.weight * sh.objects[n.object_ix].data[feature_ix]
+				tmp1 = (n.weight * n.weight) / n.distance
+				// tmp1 = 1.0 / (math.Pow(1.0+n.distance, 2.0) * n.distance)
 				for j = 0; j < sh.ndims; j++ {
-					tmp1 = (sh.locs[n.object_ix][j] - object_loc[j]) * math.Pow(1.0 + n.distance, -2.0) / n.distance
-					// tmp1 = (sh.locs[n.object_ix][j] - object_loc[j]) * math.Pow(1.0 + n.distance, -2.0) * math.Pow(n.d, -0.5)
-					T1[j] += tmp1 * sh.objects[n.object_ix].data[feature_ix]
-					T2[j] += tmp1
+					tmp2 = tmp1 * (sh.locs[n.object_ix][j] - object_loc[j]) 
+					T1[j] += tmp2 * sh.objects[n.object_ix].data[feature_ix]
+					T2[j] += tmp2
 				}
-			}			
+			}
+			// Set the reconstruction probability.
+			q = (alpha * p) + ((1.0 - alpha) * (Q / W))
+			// Update gradient information.
+			for j = 0; j < sh.ndims; j++ {
+				G[j] += ((alpha - 1.0) * p / q) * (((T1[j] * W) - (Q * T2[j])) / (W * W))
+			}
+			// Update the error.
+			E += (p * (math.Log(p) - math.Log(q)))
 		}
-		// Set the reconstruction probability.
-		q = (alpha * p) + ((1.0 - alpha) * (Q / W))
-		// Update gradient information.
-		for j = 0; j < sh.ndims; j++ {
-			G[j] += ((alpha - 1.0) * p / q) * (((T1[j] * W) - (Q * T2[j])) / (W * W))
-		}
-		// Update the error.
-		E += (p * (math.Log(p) - math.Log(q)))
 	}
-
-	// // Add distance penalty to gradient.
-	// ssd := 0.0
-	// for j = 0; j < sh.ndims; j++ {
-	// 	ssd += math.Pow(object_loc[j], 2.0)
-	// }
-	// E += l2_coeff * math.Pow(ssd, 0.5)
-	// for j = 0; j < sh.ndims; j++ {
-	// 	G[j] += l2_coeff * object_loc[j] * math.Pow(ssd, -0.5)
-	// }
-
-	// // Add distance penalty to gradient.
-	// for j = 0; j < sh.ndims; j++ {
-	// 	E += (l2_coeff * object_loc[j] * object_loc[j])
-	// 	G[j] += (2.0 * l2_coeff * object_loc[j])
-	// }
-
-	// Return gradient information.
+	// Account for L2 penalty in error and gradient.
+	for j = 0; j < sh.ndims; j++ {
+		E += (l2_coeff * object_loc[j] * object_loc[j])
+		G[j] += (2.0 * l2_coeff * object_loc[j])
+	}
+	// Return gradient information via the gradient channel.
 	gradient_channel <- GradientInfo{object_ix: object_ix, gradient: G, error: E}
 }
 
@@ -276,9 +283,12 @@ func (sh *Shoehorn) Weights(object_ix int, object_loc []float64, decay string) (
 		}
 		// If the point isn't directly on top record it as a neighbor.
 		if d > 0.0 {
-			w = WeightPair{object_ix: o, d: d, distance: math.Pow(d, 0.5)}
+			w = WeightPair{object_ix: o}
+			w.distance = math.Pow(d, 0.5)
 			w.weight = weight_function(w.distance)
-			weights = append(weights, w)
+			if w.weight > 0.0 {
+				weights = append(weights, w)
+			}
 		}
 	}
 	sort.Sort(weights)

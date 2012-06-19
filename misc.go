@@ -6,7 +6,6 @@ package shoehorn
 
 type WeightPair struct {
 	object_ix int
-	d         float64
 	distance  float64
 	weight    float64
 }
