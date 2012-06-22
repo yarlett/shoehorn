@@ -10,52 +10,47 @@ import (
 // Some general parameters.
 var NDIMS int = 2
 var KNN int = math.MaxInt32
-var ALPHA float64 = 0.01
+var EXAG float64 = 0.0
 
 // Load some of the MNIST data.
 var path, _ = os.Getwd()
 var sh = NewShoehorn(strings.Join([]string{path, "/data/mnist_data_train_subset.csv"}, ""), NDIMS)
 
-func TestErrorFuncs(t *testing.T) {
-	for object_ix := 0; object_ix < len(sh.objects); object_ix++ {
-		// Get the error from the error function.
-		E1 := sh.Error(object_ix, KNN, ALPHA)
-		// Get the error from the gradient function.
-		gradient_channel := make(chan GradientInfo, 1)
-		sh.Gradient(object_ix, KNN, ALPHA, gradient_channel)
-		g := <-gradient_channel
-		E2 := g.error
-		// Report error if the values differ non-negligibly.
-		if math.Abs(E1-E2) > 1e-12 {
-			t.Errorf("Errors for object %d do not agree (%v, vs. %v).", object_ix, E1, E2)
-		}
-	}
-}
-
 // Checks that the gradient function and its approximation are close to one another.
 func TestGradient(t *testing.T) {
 	var delta float64 = 1e-8
 	var tol float64 = 1e-6
-	// Iterate over objects and accumulate error between analytic and approximated gradient.
-	for object_ix := 0; object_ix < len(sh.objects); object_ix++ {
-		// Get the gradient from the gradient function.
-		gradient_channel := make(chan GradientInfo, 1)
-		sh.Gradient(object_ix, KNN, ALPHA, gradient_channel)
-		g := <-gradient_channel
-		G1 := g.gradient
-		// Approximate the gradient.
-		E0 := sh.Error(object_ix, KNN, ALPHA)
-		G2 := make([]float64, NDIMS)
-		for i := 0; i < NDIMS; i++ {
-			sh.locs[object_ix][i] += delta
-			E1 := sh.Error(object_ix, KNN, ALPHA)
-			G2[i] = (E1 - E0) / delta
-			sh.locs[object_ix][i] -= delta
-		}
-		// Measure discrepenacy between gradients.
-		for i := 0; i < NDIMS; i++ {
-			if math.Abs(G1[i]-G2[i]) > tol {
-				t.Errorf("Gradient error: object=%v: G1[%v]=%v G2[%v]=%v", object_ix, i, G1[i], i, G2[i])
+	for _, decay := range []string{"exp", "pow"} {
+		for _, l2 := range []float64{0.0, 1.0} {
+			for _, alpha := range []float64{0.5, 0.01} {
+				for _, exag := range []float64{1.0, 10.0} {
+					// Iterate over objects and accumulate error between analytic and approximated gradient.
+					for object_ix := 0; object_ix < 10; object_ix++ {
+						// Get the error and gradient from the gradient function.
+						gradient_channel := make(chan GradientInfo, 1)
+						sh.Gradient(object_ix, sh.locs[object_ix], KNN, alpha, l2, exag, decay, gradient_channel)
+						g := <-gradient_channel
+						E0 := g.error
+						G0 := g.gradient
+						// Approximate the gradient.
+						G1 := make([]float64, NDIMS)
+						for j := 0; j < NDIMS; j++ {
+							sh.locs[object_ix][j] += delta
+							gradient_channel := make(chan GradientInfo, 1)
+							sh.Gradient(object_ix, sh.locs[object_ix], KNN, alpha, l2, exag, decay, gradient_channel)
+							g := <-gradient_channel
+							E1 := g.error
+							G1[j] = (E1 - E0) / delta
+							sh.locs[object_ix][j] -= delta
+						}
+						// Measure discrepenacy between gradients.
+						for j := 0; j < NDIMS; j++ {
+							if math.Abs(G0[j]-G1[j]) > tol {
+								t.Errorf("Gradient error: decay=%s, l2=%e, alpha=%e, exag=%e: object=%v: G0[%v]=%v G1[%v]=%v", decay, l2, alpha, exag, object_ix, j, G0[j], j, G1[j])
+							}
+						}
+					}
+				}
 			}
 		}
 	}
