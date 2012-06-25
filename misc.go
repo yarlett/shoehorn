@@ -17,16 +17,6 @@ func (w Weights) Swap(i, j int)      { w[i], w[j] = w[j], w[i] }
 func (w Weights) Less(i, j int) bool { return w[i].weight > w[j].weight }
 
 //
-// GradientInfo allows gradient information about an object to be passed around in a channel.
-//
-
-type GradientInfo struct {
-	object_ix int
-	gradient  []float64
-	error     float64
-}
-
-//
 // Function that returns the required value of a parameter given the current epoch and the start and end points of the parameter.
 //
 

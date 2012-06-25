@@ -17,11 +17,15 @@ import (
 
 type Shoehorn struct {
 	ndims       int
-	locs        [][]float64
 	object_ixs  map[string]int
 	feature_ixs map[string]int
 	ftctr       int
 	objects     []*FeatureVector
+	E           []float64
+	L           [][]float64
+	G           [][]float64
+	Ulst        [][]float64
+	Ucur        [][]float64
 }
 
 //
@@ -38,7 +42,7 @@ func (sh *Shoehorn) Store(object string, feature string, value float64) {
 		for i := 0; i < sh.ndims; i++ {
 			loc[i] = rand.NormFloat64() * 0.001
 		}
-		sh.locs = append(sh.locs, loc)
+		sh.L = append(sh.L, loc)
 		sh.object_ixs[object] = len(sh.objects) - 1
 	}
 	// Update feature indices.
@@ -57,19 +61,19 @@ func (sh *Shoehorn) Store(object string, feature string, value float64) {
 // Learning method.
 //
 
-func (sh *Shoehorn) Learn(lr float64, momentum float64, maxepochs int, alpha float64, exag float64, l2 float64, decay string, error string) {
+func (sh *Shoehorn) Learn(lr float64, mom float64, maxepochs int, alpha float64, exag float64, l2 float64, decay string, error string) {
 	var (
-		knn, epoch, object_ix, chanctr, j int
-		mElast, mE, mG, magG              float64
-		T, t                              time.Time
-		gradient_channel                  chan GradientInfo
-		G                                 []GradientInfo
-		Ulast, U                          [][]float64
+		knn, epoch, object_ix, j int
+		mElst, mE, mG            float64
+		T, t                     time.Time
 	)
 	// Initialization.
+	mElst = math.MaxFloat64
 	knn = len(sh.objects)
-	Ulast = sh.GetUpdateStore()
-	U = sh.GetUpdateStore()
+	sh.E = make([]float64, len(sh.objects))
+	sh.G = sh.GetObjectStore()
+	sh.Ulst = sh.GetObjectStore()
+	sh.Ucur = sh.GetObjectStore()
 	// Set the maximum number of threads to be used to the number of CPU cores available.
 	numprocs := runtime.NumCPU()
 	runtime.GOMAXPROCS(numprocs)
@@ -77,81 +81,72 @@ func (sh *Shoehorn) Learn(lr float64, momentum float64, maxepochs int, alpha flo
 	T = time.Now()
 	for epoch, mG = 0, math.MaxFloat64; epoch < maxepochs; epoch++ {
 		t = time.Now()
-		// Create a channel for gradient information to be returned on.
-		gradient_channel = make(chan GradientInfo, len(sh.objects))
-		// Calculate gradient information for all objects using goroutines.
-		for object_ix = 0; object_ix < len(sh.objects); object_ix++ {
-			go sh.Gradient(object_ix, sh.locs[object_ix], knn, alpha, exag, l2, decay, error, gradient_channel)
-		}
-		// Collect all the gradient information from the gradient channel.
-		G = make([]GradientInfo, 0)
-		for chanctr = 0; chanctr < len(sh.objects); chanctr++ {
-			G = append(G, <-gradient_channel)
-		}
-		close(gradient_channel)
+		// Compute and set all gradients.
+		sh.Gradients(knn, alpha, exag, l2, decay, error)
 		// Update positions based on gradient information.
 		mE = 0.0
 		mG = 0.0
-		for chanctr = 0; chanctr < len(sh.objects); chanctr++ {
-			// Update error.
-			mE += G[chanctr].error
-			// Update overall magnitude of gradient.
-			magG = 0.0
+		for object_ix = 0; object_ix < len(sh.L); object_ix++ {
+			mE += sh.E[object_ix]
+			mG += sh.Magnitude(sh.G[object_ix])
 			for j = 0; j < sh.ndims; j++ {
-				magG += math.Pow(G[chanctr].gradient[j], 2.0)
-			}
-			mG += math.Pow(magG, 0.5)
-			// Perform gradient descent using momentum.
-			for j = 0; j < sh.ndims; j++ {
-				// Calculate the current update and apply it to current position.
-				U[G[chanctr].object_ix][j] = (lr * G[chanctr].gradient[j]) + (momentum * Ulast[G[chanctr].object_ix][j])
-				sh.locs[G[chanctr].object_ix][j] -= U[G[chanctr].object_ix][j]
+				sh.Ucur[object_ix][j] = (lr * sh.G[object_ix][j]) + (mom * sh.Ulst[object_ix][j])
+				sh.L[object_ix][j] -= sh.Ucur[object_ix][j]
 			}
 		}
 		mE /= float64(len(sh.objects))
 		mG /= float64(len(sh.objects))
 		// Report performance for epoch.
-		fmt.Printf("Epoch %6d: mE=%.10e mG=%.10e (lr=%.3e, mom=%.3e, alpha=%.3e, exag=%.3e, l2=%.3e, odist=%.3e, epoch took %v; elapsed %v).\n", epoch, mE, mG, lr, momentum, alpha, exag, l2, sh.OriginDistance(), time.Now().Sub(t), time.Now().Sub(T))
+		fmt.Printf("Epoch %6d: mE=%.10e mG=%.10e (lr=%.3e, mom=%.3e, alpha=%.3e, exag=%.3e, l2=%.3e, odist=%.3e, epoch took %v; elapsed %v).\n", epoch, mE, mG, lr, mom, alpha, exag, l2, sh.OriginDistance(), time.Now().Sub(t), time.Now().Sub(T))
 		// Update learning rate using "bold driver" method.
 		if epoch > 0 {
-			if mE < mElast {
+			if mE < mElst {
 				// Error decreased, so increase learning rate a little and make current update last update for next epoch.
 				lr *= 1.05
-				for object_ix = 0; object_ix < len(sh.objects); object_ix++ {
-					for j = 0; j < sh.ndims; j++ {
-						Ulast[object_ix][j] = U[object_ix][j]
-					}
-				}
+				sh.Ulst = sh.Ucur
+				mElst = mE
 			} else {
 				// Error didn't decrease, so undo the step that increased the error, zero the last update to kill momentum, and reduce the learning rate.
 				for object_ix = 0; object_ix < len(sh.objects); object_ix++ {
 					for j = 0; j < sh.ndims; j++ {
-						sh.locs[object_ix][j] += U[object_ix][j]
+						sh.L[object_ix][j] += sh.Ucur[object_ix][j]
 					}
-					Ulast = sh.GetUpdateStore()
 				}
+				sh.Ulst = sh.GetObjectStore()
 				lr *= 0.5
 			}
 		}
-		// Update the previous error.
-		mElast = mE
 	}
 }
 
 //
-// Gradient method.
+// Gradient methods.
 //
 
-func (sh *Shoehorn) Gradient(object_ix int, object_loc []float64, knn int, alpha float64, exag float64, l2 float64, decay string, error string, gradient_channel chan GradientInfo) {
+func (sh *Shoehorn) Gradients(knn int, alpha float64, exag float64, l2 float64, decay string, error string) {
+	// Create a channel for gradient information to be returned on.
+	C := make(chan int, len(sh.objects))
+	// Calculate gradient information for all objects using goroutines.
+	for object_ix := 0; object_ix < len(sh.objects); object_ix++ {
+		go sh.Gradient(object_ix, knn, alpha, exag, l2, decay, error, C)
+	}
+	// Collect all the gradient information from the gradient channel.
+	for object_ix := 0; object_ix < len(sh.objects); object_ix++ {
+		<-C
+	}
+	close(C)
+}
+
+func (sh *Shoehorn) Gradient(object_ix int, knn int, alpha float64, exag float64, l2 float64, decay string, error string, C chan int) {
 	var (
-		j, feature_ix                   int
-		W, E, p, q, Q, tmp1, tmp2, tmp3 float64
-		G, T1, T2                       []float64
-		N                               Weights
-		n                               WeightPair
-		decay_term                      func(float64, float64) float64
-		error_term                      func(float64, float64, float64, float64, float64) float64
-		error_func                      func(float64, float64, float64) float64
+		j, feature_ix          int
+		W, p, q, Q, g1, g2, e1 float64
+		T1, T2                 []float64
+		N                      Weights
+		n                      WeightPair
+		decay_term             func(float64, float64) float64
+		error_term             func(float64, float64, float64, float64, float64) float64
+		error_func             func(float64, float64, float64) float64
 	)
 	// Define decay term function based on decay type.
 	switch {
@@ -182,11 +177,14 @@ func (sh *Shoehorn) Gradient(object_ix int, object_loc []float64, knn int, alpha
 		}
 	}
 	// Perform initializations.
-	G = make([]float64, sh.ndims)
+	sh.E[object_ix] = 0.0
+	for j = 0; j < sh.ndims; j++ {
+		sh.G[object_ix][j] = 0.0
+	}
 	T1 = make([]float64, sh.ndims)
 	T2 = make([]float64, sh.ndims)
 	// Get nearest neighbors and sum of weights.
-	N = sh.Neighbors(object_ix, object_loc, knn, decay)
+	N = sh.Neighbors(object_ix, knn, decay)
 	// Iterate over features of object.
 	for feature_ix, p = range sh.objects[object_ix].data {
 		// Reset values of accumulating terms.
@@ -199,30 +197,89 @@ func (sh *Shoehorn) Gradient(object_ix int, object_loc []float64, knn int, alpha
 		for _, n = range N {
 			Q += n.weight * sh.objects[n.object_ix].data[feature_ix]
 			W += n.weight
-			tmp1 = decay_term(n.distance, n.weight)
+			g1 = decay_term(n.distance, n.weight)
 			for j = 0; j < sh.ndims; j++ {
-				tmp2 = tmp1 * (sh.locs[n.object_ix][j] - object_loc[j])
-				T1[j] += tmp2 * sh.objects[n.object_ix].data[feature_ix]
-				T2[j] += tmp2
+				g2 = g1 * (sh.L[n.object_ix][j] - sh.L[object_ix][j])
+				T1[j] += g2 * sh.objects[n.object_ix].data[feature_ix]
+				T2[j] += g2
 			}
 		}
 		// Set the reconstruction probability.
 		q = (alpha * p) + ((1.0 - alpha) * (Q / W))
-		// Update gradient information.
-		tmp3 = error_term(p, Q, W, alpha, exag)
-		for j = 0; j < sh.ndims; j++ {
-			G[j] += tmp3 * (((T1[j] * W) - (Q * T2[j])) / (W * W))
-		}
 		// Update the error.
-		E += error_func(p, q, exag)
+		sh.E[object_ix] += error_func(p, q, exag)
+		// Update gradient information.
+		e1 = error_term(p, Q, W, alpha, exag)
+		for j = 0; j < sh.ndims; j++ {
+			sh.G[object_ix][j] += e1 * (((T1[j] * W) - (Q * T2[j])) / (W * W))
+		}
 	}
 	// Account for L2 penalty in error and gradient.
 	for j = 0; j < sh.ndims; j++ {
-		E += (l2 * object_loc[j] * object_loc[j])
-		G[j] += (2.0 * l2 * object_loc[j])
+		sh.E[object_ix] += (l2 * sh.L[object_ix][j] * sh.L[object_ix][j])
+		sh.G[object_ix][j] += (2.0 * l2 * sh.L[object_ix][j])
 	}
-	// Return gradient information via the gradient channel.
-	gradient_channel <- GradientInfo{object_ix: object_ix, gradient: G, error: E}
+	// Signal gradient computation is complete.
+	C <- 1
+}
+
+//
+// Repositioning method.
+//
+
+func (sh *Shoehorn) Reposition(knn int, alpha float64, exag float64, l2 float64, decay string, error string) {
+	// Initialization.
+	var (
+		o, o1, o2, j  int
+		bestE, E      float64
+		best_location []float64
+		t time.Time
+	)
+	best_location = make([]float64, sh.ndims)
+	// Try repositioning each object.
+	for o1 = 0; o1 < len(sh.objects); o1++ {
+		t = time.Now()
+		// Initialize the best location and error.
+		for j = 0; j < sh.ndims; j++ {
+			best_location[j] = sh.L[o1][j]
+		}
+		sh.Gradients(knn, alpha, exag, l2, decay, error)
+		bestE = 0.0
+		for o = 0; o < len(sh.objects); o++ {
+			bestE += sh.E[o]
+		}
+		bestE /= float64(len(sh.objects))
+		fmt.Printf("Repositioning object %d (baseline E=%v).\n", o1, bestE)
+		// Try relocating o1 to position of every other object.
+		for o2 = 0; o2 < len(sh.objects); o2++ {
+			if o2 != o1 {
+				// Reposition o1 to be at o2's location.
+				for j = 0; j < sh.ndims; j++ {
+					sh.L[o1][j] = sh.L[o2][j]
+				}
+				// Get comparison error.
+				sh.Gradients(knn, alpha, exag, l2, decay, error)
+				E = 0.0
+				for o = 0; o < len(sh.objects); o++ {
+					E += sh.E[o]
+				}
+				E /= float64(len(sh.objects))
+				// Update best results.
+				if E < bestE {
+					fmt.Printf("  Moving object %d to %d yields E=%v.\n", o1, o2, E)
+					for j = 0; j < sh.ndims; j++ {
+						best_location[j] = sh.L[o1][j]
+					}
+					bestE = E
+				}
+			}
+		}
+		// Relocate o1 to the best location found.
+		for j = 0; j < sh.ndims; j++ {
+			sh.L[o1][j] = best_location[j]
+		}
+		fmt.Printf("Object %d repositioned in %v with E=%v.\n", o1, time.Now().Sub(t), bestE)
+	}
 }
 
 //
@@ -236,17 +293,17 @@ func (sh *Shoehorn) ObjectIDs() (object_ids []int) {
 	return
 }
 
-func (sh *Shoehorn) Neighbors(object_ix int, object_loc []float64, knn int, decay string) (N Weights) {
-	N = sh.Weights(object_ix, object_loc, decay)
+func (sh *Shoehorn) Neighbors(object_ix int, knn int, decay string) (N Weights) {
+	N = sh.Weights(object_ix, decay)
 	if (knn > 0) && (knn < len(N)) {
 		N = N[:knn]
 	}
 	return
 }
 
-func (sh *Shoehorn) Weights(object_ix int, object_loc []float64, decay string) (weights Weights) {
+func (sh *Shoehorn) Weights(object_ix int, decay string) (weights Weights) {
 	var (
-		w               WeightPair
+		W               WeightPair
 		o, j            int
 		d               float64
 		weight_function func(float64) float64
@@ -264,18 +321,18 @@ func (sh *Shoehorn) Weights(object_ix int, object_loc []float64, decay string) (
 	}
 	// Set distances and weights.
 	for o = 0; o < len(sh.objects); o++ {
-		// Calculate sum of squared distances.
-		d = 0.0
-		for j = 0; j < sh.ndims; j++ {
-			d += math.Pow(object_loc[j]-sh.locs[o][j], 2.0)
-		}
-		// If the point isn't directly on top record it as a neighbor.
-		if d > 0.0 {
-			w = WeightPair{object_ix: o}
-			w.distance = math.Pow(d, 0.5)
-			w.weight = weight_function(w.distance)
-			if w.weight > 0.0 {
-				weights = append(weights, w)
+		if o != object_ix {
+			// Calculate sum of squared distances.
+			d = 0.0
+			for j = 0; j < sh.ndims; j++ {
+				d += math.Pow(sh.L[object_ix][j]-sh.L[o][j], 2.0)
+			}
+			// If the point isn't directly on top record it as a neighbor.
+			W = WeightPair{object_ix: o}
+			W.distance = math.Pow(d, 0.5)
+			W.weight = weight_function(W.distance)
+			if W.weight > 0.0 {
+				weights = append(weights, W)
 			}
 		}
 	}
@@ -296,7 +353,7 @@ func (sh *Shoehorn) WriteLocations(path string) {
 		line := make([]string, 0)
 		line = append(line, object_name)
 		for i := 0; i < sh.ndims; i++ {
-			line = append(line, fmt.Sprintf("%v", sh.locs[object_ix][i]))
+			line = append(line, fmt.Sprintf("%v", sh.L[object_ix][i]))
 		}
 		of.Write([]byte(fmt.Sprintf("%v\n", strings.Join(line, ","))))
 	}
@@ -306,12 +363,7 @@ func (sh *Shoehorn) WriteLocations(path string) {
 func (sh *Shoehorn) OriginDistance() (dist float64) {
 	var n float64
 	for o := 0; o < len(sh.objects); o++ {
-		d := 0.0
-		for j := 0; j < sh.ndims; j++ {
-			d += sh.locs[o][j] * sh.locs[o][j]
-		}
-		d = math.Pow(d, 0.5)
-		dist += d
+		dist += sh.Magnitude(sh.L[o])
 		n += 1.0
 	}
 	dist = dist / n
@@ -319,11 +371,19 @@ func (sh *Shoehorn) OriginDistance() (dist float64) {
 }
 
 // Creates new storage for position update.
-func (sh *Shoehorn) GetUpdateStore() (U [][]float64) {
+func (sh *Shoehorn) GetObjectStore() (U [][]float64) {
 	U = make([][]float64, len(sh.objects))
 	for object_ix := 0; object_ix < len(sh.objects); object_ix++ {
 		U[object_ix] = make([]float64, sh.ndims)
 	}
+	return
+}
+
+func (sh *Shoehorn) Magnitude(V []float64) (mag float64) {
+	for i := 0; i < len(V); i++ {
+		mag += V[i] * V[i]
+	}
+	mag = math.Pow(mag, 0.5)
 	return
 }
 
