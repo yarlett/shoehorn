@@ -85,6 +85,10 @@ func (sh *Shoehorn) Learn(lr float64, mom float64, numepochs int, alpha float64)
 		E0, _ = sh.Error()
 		// Update the positions until error is reduced or the max number of tries is exceeded.
 		for tries, E1 = 0, math.MaxFloat64; (E1 > E0) && (tries < numtries); tries++ {
+
+			sh.Rescale(2.0)
+			sh.Gradients(knn, alpha)
+
 			// Apply the current update to object positions.
 			for object_ix = 0; object_ix < len(sh.objects); object_ix++ {
 				for j = 0; j < sh.ndims; j++ {
@@ -118,7 +122,7 @@ func (sh *Shoehorn) Learn(lr float64, mom float64, numepochs int, alpha float64)
 				lr *= 0.5
 			}
 		}
-		fmt.Printf("Epoch %6d; %2d tries: E=%.10e G=%.10e (lr=%.4e mom=%.4e alpha=%.4e odist=%.4e; epoch took %v; %v elapsed).\n", epoch, tries, E1, G1, lr, mom, alpha, sh.OriginDistance(), time.Now().Sub(t), time.Now().Sub(T))
+		fmt.Printf("Epoch %6d; %2d trie(s): E=%.10e G=%.10e (lr=%.4e mom=%.4e alpha=%.4e odist=%.4e; epoch took %v; %v elapsed).\n", epoch, tries, E1, G1, lr, mom, alpha, sh.OriginDistance(), time.Now().Sub(t), time.Now().Sub(T))
 	}
 }
 
