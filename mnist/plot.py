@@ -14,18 +14,20 @@ symbols = {
 }
 
 if __name__ == '__main__':
-	D = {}
-	f = open('mnist_locations.csv', 'r')
-	reader = csv.reader(f)
-	for row in reader:
-		obj_name = row[0][0]	
-		if obj_name not in D:
-			D[obj_name] = []
-		D[obj_name].append([float(v) for v in row[1:]])
+	for i in xrange(1, 4):
+		D = {}
+		f = open('mnist_locations{:d}.csv'.format(i), 'r')
+		reader = csv.reader(f)
+		for row in reader:
+			obj_name = row[0][0]	
+			if obj_name not in D:
+				D[obj_name] = []
+			D[obj_name].append([float(v) for v in row[1:]])
 
-	fig = lb.figure()
-	for n in sorted(D):
-		dat = np.array(D[n], 'd')
-		lb.plot(dat[:, 0], dat[:, 1], symbols[n], label='{}'.format(n))
-	lb.legend(loc=0)
+		fig = lb.figure()
+		for n in sorted(D):
+			dat = np.array(D[n], 'd')
+			lb.plot(dat[:, 0], dat[:, 1], symbols[n], label='{}'.format(n))
+		lb.legend(loc=0)
+		lb.title("Positions {:d}".format(i))
 	lb.show()
