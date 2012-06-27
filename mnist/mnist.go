@@ -16,8 +16,8 @@ func main() {
 	alpha := 0.01
 
 	// Perform first round of gradient descent.
-	lr, momentum, numepochs := 5.0, 0.8, 50
-	sh.Learn(lr, momentum, numepochs, alpha)
+	lr, momentum, l2, numepochs := 0.1, 0.25, 0.03, 100
+	sh.Learn(lr, momentum, l2, numepochs, alpha)
 	sh.WriteLocations("mnist_locations1.csv")
 
 	// // Perform repositioning search.

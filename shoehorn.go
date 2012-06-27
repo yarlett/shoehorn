@@ -62,7 +62,7 @@ func (sh *Shoehorn) Store(object string, feature string, value float64) {
 // Learning method.
 //
 
-func (sh *Shoehorn) Learn(lr float64, mom float64, numepochs int, alpha float64) {
+func (sh *Shoehorn) Learn(lr float64, mom float64, l2 float64, numepochs int, alpha float64) {
 	var (
 		knn, epoch, object_ix, j, tries, numtries int
 		E0, E1, G1                                float64
@@ -71,13 +71,15 @@ func (sh *Shoehorn) Learn(lr float64, mom float64, numepochs int, alpha float64)
 	// Start timing.
 	T = time.Now()
 	// Initialization.
+	sh.lr = lr
+	sh.mom = mom
 	knn = len(sh.objects)
 	numtries = 5
 	sh.E = make([]float64, len(sh.objects))
 	sh.G = sh.GetObjectStore()
 	sh.Ulst = sh.GetObjectStore()
 	sh.Ucur = sh.GetObjectStore()
-	sh.Gradients(knn, alpha)
+	sh.Gradients(knn, alpha, l2)
 	// Iterate over epochs of learning.
 	for epoch = 0; epoch < numepochs; epoch++ {
 		t = time.Now()
@@ -85,24 +87,20 @@ func (sh *Shoehorn) Learn(lr float64, mom float64, numepochs int, alpha float64)
 		E0, _ = sh.Error()
 		// Update the positions until error is reduced or the max number of tries is exceeded.
 		for tries, E1 = 0, math.MaxFloat64; (E1 > E0) && (tries < numtries); tries++ {
-
-			sh.Rescale(2.0)
-			sh.Gradients(knn, alpha)
-
 			// Apply the current update to object positions.
 			for object_ix = 0; object_ix < len(sh.objects); object_ix++ {
 				for j = 0; j < sh.ndims; j++ {
-					sh.Ucur[object_ix][j] = (lr * sh.G[object_ix][j]) + (mom * sh.Ulst[object_ix][j])
+					sh.Ucur[object_ix][j] = (sh.lr * sh.G[object_ix][j]) + (sh.mom * sh.Ulst[object_ix][j])
 					sh.L[object_ix][j] -= sh.Ucur[object_ix][j]
 				}
 			}
 			// Calculate the revised error.
-			sh.Gradients(knn, alpha)
+			sh.Gradients(knn, alpha, l2)
 			E1, G1 = sh.Error()
 			// If the error has been reduced then success.
 			if E1 < E0 {
 				// Increase the learning rate by a modest amount.
-				lr *= 1.05
+				sh.lr *= 1.05
 				// Make the current update the last update (used as the momentum term in the next epoch).
 				for object_ix = 0; object_ix < len(sh.objects); object_ix++ {
 					for j = 0; j < sh.ndims; j++ {
@@ -119,10 +117,10 @@ func (sh *Shoehorn) Learn(lr float64, mom float64, numepochs int, alpha float64)
 					}
 				}
 				// Reduce the learning rate significantly.
-				lr *= 0.5
+				sh.lr *= 0.5
 			}
 		}
-		fmt.Printf("Epoch %6d; %2d trie(s): E=%.10e G=%.10e (lr=%.4e mom=%.4e alpha=%.4e odist=%.4e; epoch took %v; %v elapsed).\n", epoch, tries, E1, G1, lr, mom, alpha, sh.OriginDistance(), time.Now().Sub(t), time.Now().Sub(T))
+		fmt.Printf("Epoch %6d (%2d tries): E=%.10e G=%.10e (lr=%.4e mom=%.4e alpha=%.4e l2=%.4e odist=%.4e; epoch took %v; %v elapsed).\n", epoch, tries, E1, G1, sh.lr, sh.mom, alpha, l2, sh.OriginDistance(), time.Now().Sub(t), time.Now().Sub(T))
 	}
 }
 
@@ -130,7 +128,7 @@ func (sh *Shoehorn) Learn(lr float64, mom float64, numepochs int, alpha float64)
 // Gradient methods.
 //
 
-func (sh *Shoehorn) Gradients(knn int, alpha float64) {
+func (sh *Shoehorn) Gradients(knn int, alpha float64, l2 float64) {
 	var (
 		C         chan bool
 		object_ix int
@@ -140,7 +138,7 @@ func (sh *Shoehorn) Gradients(knn int, alpha float64) {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	// Calculate gradient information for all objects using goroutines.
 	for object_ix = 0; object_ix < len(sh.objects); object_ix++ {
-		go sh.Gradient(object_ix, knn, alpha, C)
+		go sh.Gradient(object_ix, knn, alpha, l2, C)
 	}
 	// Collect all the gradient information from the gradient channel.
 	for object_ix = 0; object_ix < len(sh.objects); object_ix++ {
@@ -149,7 +147,7 @@ func (sh *Shoehorn) Gradients(knn int, alpha float64) {
 	close(C)
 }
 
-func (sh *Shoehorn) Gradient(object_ix int, knn int, alpha float64, C chan bool) {
+func (sh *Shoehorn) Gradient(object_ix int, knn int, alpha float64, l2 float64, C chan bool) {
 	var (
 		j, feature_ix int
 		W, p, q, Q    float64
@@ -193,6 +191,11 @@ func (sh *Shoehorn) Gradient(object_ix int, knn int, alpha float64, C chan bool)
 		for j = 0; j < sh.ndims; j++ {
 			sh.G[object_ix][j] += (((alpha - 1.0) * p / q) * (((T1[j] * W) - (Q * T2[j])) / (W * W)))
 		}
+	}
+	// Handle L2 coefficient.
+	for j = 0; j < sh.ndims; j++ {
+		sh.E[object_ix] += (l2 * sh.L[object_ix][j] * sh.L[object_ix][j])
+		sh.G[object_ix][j] += (2.0 * l2 * sh.L[object_ix][j]) 
 	}
 	// Signal gradient computation is complete.
 	C <- true
