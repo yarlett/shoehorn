@@ -120,7 +120,7 @@ func (sh *Shoehorn) Learn(lr float64, mom float64, l2 float64, numepochs int, al
 				sh.lr *= 0.5
 			}
 		}
-		fmt.Printf("Epoch %6d (%2d tries): E=%.10e G=%.10e (lr=%.4e mom=%.4e alpha=%.4e l2=%.4e odist=%.4e; epoch took %v; %v elapsed).\n", epoch, tries, E1, G1, sh.lr, sh.mom, alpha, l2, sh.OriginDistance(), time.Now().Sub(t), time.Now().Sub(T))
+		fmt.Printf("Epoch %6d (%d tries): E=%.10e G=%.10e (lr=%.4e mom=%.4e alpha=%.4e l2=%.4e odist=%.4e; epoch took %v; %v elapsed).\n", epoch, tries, E1, G1, sh.lr, sh.mom, alpha, l2, sh.OriginDistance(), time.Now().Sub(t), time.Now().Sub(T))
 	}
 }
 
@@ -137,6 +137,8 @@ func (sh *Shoehorn) Gradients(knn int, alpha float64, l2 float64) {
 	// Set the maximum number of threads to be used to the number of CPU cores available.
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	// Calculate gradient information for all objects using goroutines.
+	sh.E = make([]float64, len(sh.objects))
+	sh.G = sh.GetObjectStore()
 	for object_ix = 0; object_ix < len(sh.objects); object_ix++ {
 		go sh.Gradient(object_ix, knn, alpha, l2, C)
 	}
@@ -155,13 +157,15 @@ func (sh *Shoehorn) Gradient(object_ix int, knn int, alpha float64, l2 float64, 
 		N             Weights
 		n             WeightPair
 	)
+
 	// Perform initializations.
-	sh.E[object_ix] = 0.0
-	for j = 0; j < sh.ndims; j++ {
-		sh.G[object_ix][j] = 0.0
-	}
+	// sh.E[object_ix] = 0.0
+	// for j = 0; j < sh.ndims; j++ {
+	// 	sh.G[object_ix][j] = 0.0
+	// }
 	T1 = make([]float64, sh.ndims)
 	T2 = make([]float64, sh.ndims)
+
 	// Get nearest neighbors and sum of weights.
 	N = sh.Neighbors(object_ix, knn)
 	// Iterate over features of object.
@@ -172,14 +176,33 @@ func (sh *Shoehorn) Gradient(object_ix int, knn int, alpha float64, l2 float64, 
 		for j = 0; j < sh.ndims; j++ {
 			T1[j], T2[j] = 0.0, 0.0
 		}
+		
+		BOB1 := make([][]float64, len(sh.objects))
+		BOB2 := make([][]float64, len(sh.objects))
+		for o := 0; o < len(sh.objects); o++ {
+			BOB1[o] = make([]float64, sh.ndims)
+			BOB2[o] = make([]float64, sh.ndims)
+		}
+		//BOB1 := make(map[int][]float64, 0)
+		//BOB2 := make(map[int][]float64, 0)
+
 		// Calculate exponential gradient terms.
 		for _, n = range N {
+
+			// _, ok := BOB1[n.object_ix]
+			// if !ok {
+			// 	BOB1[n.object_ix] = make([]float64, sh.ndims)
+			// 	BOB2[n.object_ix] = make([]float64, sh.ndims)				
+			// }
+
 			if n.distance > 0.0 {
 				Q += n.weight * sh.objects[n.object_ix].data[feature_ix]
 				W += n.weight
 				for j = 0; j < sh.ndims; j++ {
 					T1[j] += (n.weight / n.distance) * (sh.L[n.object_ix][j] - sh.L[object_ix][j]) * sh.objects[n.object_ix].data[feature_ix]
 					T2[j] += (n.weight / n.distance) * (sh.L[n.object_ix][j] - sh.L[object_ix][j])
+					BOB1[n.object_ix][j] -= (n.weight / n.distance) * (sh.L[n.object_ix][j] - sh.L[object_ix][j]) * sh.objects[n.object_ix].data[feature_ix]
+					BOB2[n.object_ix][j] -= (n.weight / n.distance) * (sh.L[n.object_ix][j] - sh.L[object_ix][j])					
 				}
 			}
 		}
@@ -191,6 +214,17 @@ func (sh *Shoehorn) Gradient(object_ix int, knn int, alpha float64, l2 float64, 
 		for j = 0; j < sh.ndims; j++ {
 			sh.G[object_ix][j] += (((alpha - 1.0) * p / q) * (((T1[j] * W) - (Q * T2[j])) / (W * W)))
 		}
+		//
+		for o := 0; o < len(sh.objects); o++ {
+			for j = 0; j < sh.ndims; j++ {
+				sh.G[o][j] += (((alpha - 1.0) * p / q) * (((BOB1[o][j] * W) - (Q * BOB2[o][j])) / (W * W)))
+			}
+		}
+		// for o, v := range BOB1 {
+		// 	for j = 0; j < sh.ndims; j++ {
+		// 		sh.G[o][j] += (((alpha - 1.0) * p / q) * (((v[j] * W) - (Q * BOB2[o][j])) / (W * W)))
+		// 	}
+		// }
 	}
 	// Handle L2 coefficient.
 	for j = 0; j < sh.ndims; j++ {

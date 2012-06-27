@@ -16,7 +16,7 @@ func main() {
 	alpha := 0.01
 
 	// Perform first round of gradient descent.
-	lr, momentum, l2, numepochs := 0.1, 0.25, 0.03, 100
+	lr, momentum, l2, numepochs := 0.1, 0.25, 0.0, 100
 	sh.Learn(lr, momentum, l2, numepochs, alpha)
 	sh.WriteLocations("mnist_locations1.csv")
 
