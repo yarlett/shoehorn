@@ -1,59 +1,87 @@
 package shoehorn
 
 import (
+	"fmt"
 	"math"
-	"os"
-	"strings"
+	"math/rand"
 	"testing"
 )
 
 // Some general parameters.
-var NDIMS int = 2
-var KNN int = math.MaxInt32
-var EXAG float64 = 0.0
+var (
+	NDIMS int     = 2
+	KNN   int     = math.MaxInt32
+	ALPHA float64 = 0.01
+	L2    float64 = 0.0
+)
 
-// Load some of the MNIST data.
-var path, _ = os.Getwd()
-var sh = NewShoehorn(strings.Join([]string{path, "/data/mnist_data_train_subset.csv"}, ""), NDIMS)
+// Returns a Shoehorn object initialized with some test data.
+func GetTestData(nobjs, ndims int) (sh Shoehorn) {
+	var (
+		o, j                      int
+		object_name, feature_name string
+		feature_value             float64
+	)
+	sh = Shoehorn{ndims: ndims, feature_ixs: make(map[string]int), object_ixs: make(map[string]int)}
+	// Generate random object data.
+	for o = 0; o < nobjs; o++ {
+		object_name = fmt.Sprintf("TestObject %v", o)
+		for j = 0; j < ndims; j++ {
+			feature_name = fmt.Sprintf("Feature %v", j)
+			feature_value = rand.Float64()
+			sh.Store(object_name, feature_name, feature_value)
+		}
+	}
+	// Normalize sums of data.
+	for o = 0; o < len(sh.objects); o++ {
+		sum := sh.objects[o].Sum()
+		for k, v := range sh.objects[o].data {
+			sh.objects[o].Set(k, v/sum)
+		}
+	}
+	return
+}
 
 // Checks that the gradient function and its approximation are close to one another.
 func TestGradient(t *testing.T) {
-	var delta float64 = 1e-6
-	var pctol float64 = 5.0 // Tolerate up to 5% error.
-	for _, decay := range []string{"exp", "pow"} {
-		for _, error := range []string{"kl", "l2"} {
-			for _, l2 := range []float64{0.0, 1.0} {
-				for _, alpha := range []float64{0.5, 0.01} {
-					for _, exag := range []float64{1.0, 10.0} {
-						// Iterate over objects and accumulate error between analytic and approximated gradient.
-						for object_ix := 0; object_ix < 10; object_ix++ {
-							// Get the error and gradient from the gradient function.
-							gradient_channel := make(chan GradientInfo, 1)
-							sh.Gradient(object_ix, sh.locs[object_ix], KNN, alpha, exag, l2, decay, error, gradient_channel)
-							g := <-gradient_channel
-							E0 := g.error
-							G0 := g.gradient
-							// Approximate the gradient.
-							G1 := make([]float64, NDIMS)
-							for j := 0; j < NDIMS; j++ {
-								sh.locs[object_ix][j] += delta
-								gradient_channel := make(chan GradientInfo, 1)
-								sh.Gradient(object_ix, sh.locs[object_ix], KNN, alpha, exag, l2, decay, error, gradient_channel)
-								g := <-gradient_channel
-								E1 := g.error
-								G1[j] = (E1 - E0) / delta
-								sh.locs[object_ix][j] -= delta
-							}
-							// Measure discrepenacy between gradients.
-							for j := 0; j < NDIMS; j++ {
-								pcerr := math.Abs((G0[j]-G1[j])/G1[j]) * 100.0
-								if pcerr > pctol {
-									t.Errorf("Gradient error %.2f%% :decay=%s, error=%s, l2=%e, alpha=%e, exag=%e: object=%v: G0[%v]=%v G1[%v]=%v", pcerr, decay, error, l2, alpha, exag, object_ix, j, G0[j], j, G1[j])
-								}
-							}
-						}
-					}
-				}
+	var (
+		o, object_ix, j                   int
+		E0, E1, nudge, approx_grad, pcerr float64
+		G0                                [][]float64
+		sh                                Shoehorn
+	)
+	nudge = 1e-10
+	sh = GetTestData(50, 3)
+	// Compute gradient information.
+	sh.Gradients(KNN, ALPHA, L2)
+	// Save error and gradient information.
+	E0 = 0.0
+	G0 = sh.GetObjectStore()
+	for o = 0; o < len(sh.objects); o++ {
+		E0 += sh.E[o]
+		for j = 0; j < sh.ndims; j++ {
+			G0[o][j] = sh.G[o][j]
+		}
+	}
+	// Iterate over the position of each object in each dimension.
+	for object_ix = 0; object_ix < len(sh.objects); object_ix++ {
+		for j = 0; j < sh.ndims; j++ {
+			// Nudge the position.
+			sh.L[object_ix][j] += nudge
+			// Calculate the new error.
+			sh.Gradients(KNN, ALPHA, L2)
+			E1 = 0.0
+			for o = 0; o < len(sh.objects); o++ {
+				E1 += sh.E[o]
+			}
+			// Approximate the gradient.
+			approx_grad = (E1 - E0) / nudge
+			// Reset the position.
+			sh.L[object_ix][j] -= nudge
+			// Compare actual and approximated gradients.
+			pcerr = math.Abs((G0[object_ix][j]-approx_grad)/G0[object_ix][j]) * 100.0
+			if pcerr > 0.01 {
+				t.Errorf("Discrepancy in gradient for object %3d in dimension %3d: %3.2f%% Error: Analytic=%2.10e; Approximated=%2.10e.\n", object_ix, j, pcerr, G0[object_ix][j], approx_grad)
 			}
 		}
 	}

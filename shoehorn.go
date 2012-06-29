@@ -41,7 +41,7 @@ func (sh *Shoehorn) Store(object string, feature string, value float64) {
 		sh.objects = append(sh.objects, &FeatureVector{data: make(map[int]float64)})
 		loc := make([]float64, sh.ndims)
 		for i := 0; i < sh.ndims; i++ {
-			loc[i] = rand.NormFloat64() * 0.001
+			loc[i] = rand.NormFloat64() * 0.01
 		}
 		sh.L = append(sh.L, loc)
 		sh.object_ixs[object] = len(sh.objects) - 1
@@ -75,12 +75,10 @@ func (sh *Shoehorn) Learn(lr float64, mom float64, l2 float64, numepochs int, al
 	sh.mom = mom
 	knn = len(sh.objects)
 	numtries = 5
-	sh.E = make([]float64, len(sh.objects))
-	sh.G = sh.GetObjectStore()
 	sh.Ulst = sh.GetObjectStore()
 	sh.Ucur = sh.GetObjectStore()
-	sh.Gradients(knn, alpha, l2)
 	// Iterate over epochs of learning.
+	sh.Gradients(knn, alpha, l2)
 	for epoch = 0; epoch < numepochs; epoch++ {
 		t = time.Now()
 		// Set the current error.
@@ -100,7 +98,7 @@ func (sh *Shoehorn) Learn(lr float64, mom float64, l2 float64, numepochs int, al
 			// If the error has been reduced then success.
 			if E1 < E0 {
 				// Increase the learning rate by a modest amount.
-				sh.lr *= 1.05
+				sh.lr *= 1.01
 				// Make the current update the last update (used as the momentum term in the next epoch).
 				for object_ix = 0; object_ix < len(sh.objects); object_ix++ {
 					for j = 0; j < sh.ndims; j++ {
@@ -120,7 +118,7 @@ func (sh *Shoehorn) Learn(lr float64, mom float64, l2 float64, numepochs int, al
 				sh.lr *= 0.5
 			}
 		}
-		fmt.Printf("Epoch %6d (%d tries): E=%.10e G=%.10e (lr=%.4e mom=%.4e alpha=%.4e l2=%.4e odist=%.4e; epoch took %v; %v elapsed).\n", epoch, tries, E1, G1, sh.lr, sh.mom, alpha, l2, sh.OriginDistance(), time.Now().Sub(t), time.Now().Sub(T))
+		fmt.Printf("Epoch %6d (%d tries): E=%.10e G=%.10e (lr=%.4e mom=%.4e alpha=%.4e l2=%.4e odist=%.4e; epoch took %v; %v elapsed).\n", epoch+1, tries, E1, G1, sh.lr, sh.mom, alpha, l2, sh.OriginDistance(), time.Now().Sub(t), time.Now().Sub(T))
 	}
 }
 
@@ -136,9 +134,10 @@ func (sh *Shoehorn) Gradients(knn int, alpha float64, l2 float64) {
 	C = make(chan bool, len(sh.objects))
 	// Set the maximum number of threads to be used to the number of CPU cores available.
 	runtime.GOMAXPROCS(runtime.NumCPU())
-	// Calculate gradient information for all objects using goroutines.
+	// Initialize error and gradient storage.
 	sh.E = make([]float64, len(sh.objects))
 	sh.G = sh.GetObjectStore()
+	// Calculate gradient information for all objects using goroutines.
 	for object_ix = 0; object_ix < len(sh.objects); object_ix++ {
 		go sh.Gradient(object_ix, knn, alpha, l2, C)
 	}
@@ -146,124 +145,95 @@ func (sh *Shoehorn) Gradients(knn int, alpha float64, l2 float64) {
 	for object_ix = 0; object_ix < len(sh.objects); object_ix++ {
 		<-C
 	}
-	close(C)
 }
 
 func (sh *Shoehorn) Gradient(object_ix int, knn int, alpha float64, l2 float64, C chan bool) {
 	var (
-		j, feature_ix int
-		W, p, q, Q    float64
-		T1, T2        []float64
-		N             Weights
-		n             WeightPair
+		j, feature_ix                    int
+		SW, SWP, p, q, tmp1, tmp2, odist float64
+		T1, T2                           []float64
+		N                                Weights
+		n                                WeightPair
 	)
-
 	// Perform initializations.
-	// sh.E[object_ix] = 0.0
-	// for j = 0; j < sh.ndims; j++ {
-	// 	sh.G[object_ix][j] = 0.0
-	// }
 	T1 = make([]float64, sh.ndims)
 	T2 = make([]float64, sh.ndims)
-
 	// Get nearest neighbors and sum of weights.
 	N = sh.Neighbors(object_ix, knn)
 	// Iterate over features of object.
 	for feature_ix, p = range sh.objects[object_ix].data {
 		// Reset values of accumulating terms.
-		Q = 0.0
-		W = 0.0
+		SWP = 0.0
+		SW = 0.0
 		for j = 0; j < sh.ndims; j++ {
 			T1[j], T2[j] = 0.0, 0.0
 		}
-		
-		BOB1 := make([][]float64, len(sh.objects))
-		BOB2 := make([][]float64, len(sh.objects))
-		for o := 0; o < len(sh.objects); o++ {
-			BOB1[o] = make([]float64, sh.ndims)
-			BOB2[o] = make([]float64, sh.ndims)
-		}
-		//BOB1 := make(map[int][]float64, 0)
-		//BOB2 := make(map[int][]float64, 0)
-
-		// Calculate exponential gradient terms.
+		// Calculate gradient terms.
 		for _, n = range N {
-
-			// _, ok := BOB1[n.object_ix]
-			// if !ok {
-			// 	BOB1[n.object_ix] = make([]float64, sh.ndims)
-			// 	BOB2[n.object_ix] = make([]float64, sh.ndims)				
-			// }
-
-			if n.distance > 0.0 {
-				Q += n.weight * sh.objects[n.object_ix].data[feature_ix]
-				W += n.weight
-				for j = 0; j < sh.ndims; j++ {
-					T1[j] += (n.weight / n.distance) * (sh.L[n.object_ix][j] - sh.L[object_ix][j]) * sh.objects[n.object_ix].data[feature_ix]
-					T2[j] += (n.weight / n.distance) * (sh.L[n.object_ix][j] - sh.L[object_ix][j])
-					BOB1[n.object_ix][j] -= (n.weight / n.distance) * (sh.L[n.object_ix][j] - sh.L[object_ix][j]) * sh.objects[n.object_ix].data[feature_ix]
-					BOB2[n.object_ix][j] -= (n.weight / n.distance) * (sh.L[n.object_ix][j] - sh.L[object_ix][j])					
-				}
+			SWP += n.weight * sh.objects[n.object_ix].data[feature_ix]
+			SW += n.weight
+			for j = 0; j < sh.ndims; j++ {
+				tmp2 = n.weight * (sh.L[n.object_ix][j] - sh.L[object_ix][j]) / n.distance
+				T1[j] += tmp2 * sh.objects[n.object_ix].data[feature_ix]
+				T2[j] += tmp2
 			}
 		}
 		// Set the reconstruction probability.
-		q = (alpha * p) + ((1.0 - alpha) * (Q / W))
+		q = (alpha * p) + ((1.0 - alpha) * (SWP / SW))
 		// Update the error.
 		sh.E[object_ix] += (p * (math.Log(p) - math.Log(q)))
 		// Update gradient information.
+		tmp1 = (alpha - 1.0) * p / q
 		for j = 0; j < sh.ndims; j++ {
-			sh.G[object_ix][j] += (((alpha - 1.0) * p / q) * (((T1[j] * W) - (Q * T2[j])) / (W * W)))
+			sh.G[object_ix][j] += (tmp1 * (((T1[j] * SW) - (SWP * T2[j])) / (SW * SW)))
 		}
-		//
-		for o := 0; o < len(sh.objects); o++ {
+		// Update gradient information of neighbor objects.
+		for _, n = range N {
 			for j = 0; j < sh.ndims; j++ {
-				sh.G[o][j] += (((alpha - 1.0) * p / q) * (((BOB1[o][j] * W) - (Q * BOB2[o][j])) / (W * W)))
+				tmp2 = n.weight * (sh.L[object_ix][j] - sh.L[n.object_ix][j]) / n.distance
+				sh.G[n.object_ix][j] += (tmp1 * (((tmp2 * sh.objects[n.object_ix].data[feature_ix] * SW) - (SWP * tmp2)) / (SW * SW)))
 			}
 		}
-		// for o, v := range BOB1 {
-		// 	for j = 0; j < sh.ndims; j++ {
-		// 		sh.G[o][j] += (((alpha - 1.0) * p / q) * (((v[j] * W) - (Q * BOB2[o][j])) / (W * W)))
-		// 	}
-		// }
 	}
 	// Handle L2 coefficient.
+	odist = sh.Magnitude(sh.L[object_ix])
+	sh.E[object_ix] += l2 * odist
 	for j = 0; j < sh.ndims; j++ {
-		sh.E[object_ix] += (l2 * sh.L[object_ix][j] * sh.L[object_ix][j])
-		sh.G[object_ix][j] += (2.0 * l2 * sh.L[object_ix][j]) 
+		sh.G[object_ix][j] += (l2 * sh.L[object_ix][j] / odist)
 	}
 	// Signal gradient computation is complete.
 	C <- true
 }
 
-func (sh *Shoehorn) Rescale(radius float64) {
-	var (
-		object_ix, j int
-		d, maxdist   float64
-		centroid     []float64
-	)
-	centroid = make([]float64, sh.ndims)
-	// Find maximum distance and centroid.
-	for object_ix := 0; object_ix < len(sh.objects); object_ix++ {
-		// Update maximum distance.
-		d = sh.Magnitude(sh.L[object_ix])
-		if d > maxdist {
-			maxdist = d
-		}
-		// Update centroid.
-		for j = 0; j < sh.ndims; j++ {
-			centroid[j] += sh.L[object_ix][j]
-		}
-	}
-	for j = 0; j < sh.ndims; j++ {
-		centroid[j] = centroid[j] / float64(len(sh.objects))
-	}
-	// Recenter and rescale.
-	for object_ix = 0; object_ix < len(sh.objects); object_ix++ {
-		for j = 0; j < sh.ndims; j++ {
-			sh.L[object_ix][j] = (sh.L[object_ix][j] - centroid[j]) * (radius / maxdist)
-		}
-	}
-}
+// func (sh *Shoehorn) Rescale(radius float64) {
+// 	var (
+// 		object_ix, j int
+// 		d, maxdist   float64
+// 		centroid     []float64
+// 	)
+// 	centroid = make([]float64, sh.ndims)
+// 	// Find maximum distance and centroid.
+// 	for object_ix := 0; object_ix < len(sh.objects); object_ix++ {
+// 		// Update maximum distance.
+// 		d = sh.Magnitude(sh.L[object_ix])
+// 		if d > maxdist {
+// 			maxdist = d
+// 		}
+// 		// Update centroid.
+// 		for j = 0; j < sh.ndims; j++ {
+// 			centroid[j] += sh.L[object_ix][j]
+// 		}
+// 	}
+// 	for j = 0; j < sh.ndims; j++ {
+// 		centroid[j] = centroid[j] / float64(len(sh.objects))
+// 	}
+// 	// Recenter and rescale.
+// 	for object_ix = 0; object_ix < len(sh.objects); object_ix++ {
+// 		for j = 0; j < sh.ndims; j++ {
+// 			sh.L[object_ix][j] = (sh.L[object_ix][j] - centroid[j]) * (radius / maxdist)
+// 		}
+// 	}
+// }
 
 // //
 // // Repositioning method.
@@ -345,29 +315,28 @@ func (sh *Shoehorn) ObjectIDs() (object_ids []int) {
 func (sh *Shoehorn) Neighbors(object_ix int, knn int) (N Weights) {
 	N = sh.Weights(object_ix)
 	if (knn > 0) && (knn < len(N)) {
-		N = N[0:knn]
+		N = N[:knn]
 	}
 	return
 }
 
 func (sh *Shoehorn) Weights(object_ix int) (weights Weights) {
 	var (
-		W    WeightPair
-		o, j int
-		d    float64
+		W        WeightPair
+		o, j     int
+		distance float64
 	)
 	// Set distances and weights.
 	for o = 0; o < len(sh.objects); o++ {
 		if o != object_ix {
-			// Calculate sum of squared distances.
-			d = 0.0
+			// Calculate distance.
+			distance = 0.0
 			for j = 0; j < sh.ndims; j++ {
-				d += math.Pow(sh.L[object_ix][j]-sh.L[o][j], 2.0)
+				distance += math.Pow(sh.L[object_ix][j]-sh.L[o][j], 2.0)
 			}
+			distance = math.Pow(distance, 0.5)
 			// If the point isn't directly on top record it as a neighbor.
-			W = WeightPair{object_ix: o}
-			W.distance = math.Pow(d, 0.5)
-			W.weight = math.Exp(-W.distance)
+			W = WeightPair{object_ix: o, distance: distance, weight: math.Exp(-distance)}
 			if W.weight > 0.0 {
 				weights = append(weights, W)
 			}
@@ -408,10 +377,10 @@ func (sh *Shoehorn) OriginDistance() (dist float64) {
 }
 
 // Creates new storage for position update.
-func (sh *Shoehorn) GetObjectStore() (U [][]float64) {
-	U = make([][]float64, len(sh.objects))
+func (sh *Shoehorn) GetObjectStore() (S [][]float64) {
+	S = make([][]float64, len(sh.objects))
 	for object_ix := 0; object_ix < len(sh.objects); object_ix++ {
-		U[object_ix] = make([]float64, sh.ndims)
+		S[object_ix] = make([]float64, sh.ndims)
 	}
 	return
 }

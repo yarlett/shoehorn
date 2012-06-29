@@ -14,7 +14,7 @@ symbols = {
 }
 
 if __name__ == '__main__':
-	for i in xrange(1, 4):
+	for i in xrange(1, 2):
 		D = {}
 		f = open('mnist_locations{:d}.csv'.format(i), 'r')
 		reader = csv.reader(f)
