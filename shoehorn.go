@@ -41,7 +41,7 @@ func (sh *Shoehorn) Store(object string, feature string, value float64) {
 		sh.objects = append(sh.objects, &FeatureVector{data: make(map[int]float64)})
 		loc := make([]float64, sh.ndims)
 		for i := 0; i < sh.ndims; i++ {
-			loc[i] = rand.NormFloat64() * 0.01
+			loc[i] = rand.NormFloat64() * 0.1
 		}
 		sh.L = append(sh.L, loc)
 		sh.object_ixs[object] = len(sh.objects) - 1
@@ -185,13 +185,13 @@ func (sh *Shoehorn) Gradient(object_ix int, knn int, alpha float64, l2 float64, 
 		// Update gradient information.
 		tmp1 = (alpha - 1.0) * p / q
 		for j = 0; j < sh.ndims; j++ {
-			sh.G[object_ix][j] += (tmp1 * (((T1[j] * SW) - (SWP * T2[j])) / (SW * SW)))
+			sh.G[object_ix][j] += tmp1 * (((T1[j] * SW) - (SWP * T2[j])) / (SW * SW))
 		}
 		// Update gradient information of neighbor objects.
 		for _, n = range N {
 			for j = 0; j < sh.ndims; j++ {
 				tmp2 = n.weight * (sh.L[object_ix][j] - sh.L[n.object_ix][j]) / n.distance
-				sh.G[n.object_ix][j] += (tmp1 * (((tmp2 * sh.objects[n.object_ix].data[feature_ix] * SW) - (SWP * tmp2)) / (SW * SW)))
+				sh.G[n.object_ix][j] += tmp1 * (((tmp2 * sh.objects[n.object_ix].data[feature_ix] * SW) - (SWP * tmp2)) / (SW * SW))
 			}
 		}
 	}
@@ -337,9 +337,7 @@ func (sh *Shoehorn) Weights(object_ix int) (weights Weights) {
 			distance = math.Pow(distance, 0.5)
 			// If the point isn't directly on top record it as a neighbor.
 			W = WeightPair{object_ix: o, distance: distance, weight: math.Exp(-distance)}
-			if W.weight > 0.0 {
-				weights = append(weights, W)
-			}
+			weights = append(weights, W)
 		}
 	}
 	sort.Sort(weights)

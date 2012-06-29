@@ -46,19 +46,16 @@ func GetTestData(nobjs, ndims int) (sh Shoehorn) {
 func TestGradient(t *testing.T) {
 	var (
 		o, object_ix, j                   int
-		E0, E1, nudge, approx_grad, pcerr float64
+		approx_grad, pcerr, h, Eh, Enh float64
 		G0                                [][]float64
 		sh                                Shoehorn
 	)
-	nudge = 1e-10
+	// Initialize test data.
 	sh = GetTestData(50, 3)
-	// Compute gradient information.
+	// Compute and save gradient information for objects.
 	sh.Gradients(KNN, ALPHA, L2)
-	// Save error and gradient information.
-	E0 = 0.0
 	G0 = sh.GetObjectStore()
 	for o = 0; o < len(sh.objects); o++ {
-		E0 += sh.E[o]
 		for j = 0; j < sh.ndims; j++ {
 			G0[o][j] = sh.G[o][j]
 		}
@@ -66,22 +63,30 @@ func TestGradient(t *testing.T) {
 	// Iterate over the position of each object in each dimension.
 	for object_ix = 0; object_ix < len(sh.objects); object_ix++ {
 		for j = 0; j < sh.ndims; j++ {
-			// Nudge the position.
-			sh.L[object_ix][j] += nudge
-			// Calculate the new error.
+			// Calculate the step size h (small enoguh to provide good approximation to gradient without being so small as to cause underflow / rounding issues in calculation).
+			h = math.Pow(2.2e-16, 0.5) * sh.L[object_ix][j]
+			// Calculate error at x - h.
+			sh.L[object_ix][j] -= h
 			sh.Gradients(KNN, ALPHA, L2)
-			E1 = 0.0
+			Enh = 0.0
 			for o = 0; o < len(sh.objects); o++ {
-				E1 += sh.E[o]
+				Enh += sh.E[o]
 			}
-			// Approximate the gradient.
-			approx_grad = (E1 - E0) / nudge
-			// Reset the position.
-			sh.L[object_ix][j] -= nudge
+			// Calculate error at x + h.
+			sh.L[object_ix][j] += 2.0 * h
+			sh.Gradients(KNN, ALPHA, L2)
+			Eh = 0.0
+			for o = 0; o < len(sh.objects); o++ {
+				Eh += sh.E[o]
+			}
+			// Reset x to original position.
+			sh.L[object_ix][j] -= h
+			// Calculate approximate gradient.
+			approx_grad = (Eh - Enh) / (2.0 * h)
 			// Compare actual and approximated gradients.
 			pcerr = math.Abs((G0[object_ix][j]-approx_grad)/G0[object_ix][j]) * 100.0
-			if pcerr > 0.01 {
-				t.Errorf("Discrepancy in gradient for object %3d in dimension %3d: %3.2f%% Error: Analytic=%2.10e; Approximated=%2.10e.\n", object_ix, j, pcerr, G0[object_ix][j], approx_grad)
+			if pcerr > 0.1 {
+				t.Errorf("Discrepancy in gradient for object %3d in dimension %3d: %3.2f%% Error: h=%e: Analytic=%2.10e; Approximated=%2.10e.\n", object_ix, j, pcerr, h, G0[object_ix][j], approx_grad)
 			}
 		}
 	}
