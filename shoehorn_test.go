@@ -33,12 +33,7 @@ func GetTestData(nobjs, ndims int) (sh Shoehorn) {
 		}
 	}
 	// Normalize sums of data.
-	for o = 0; o < len(sh.objects); o++ {
-		sum := sh.objects[o].Sum()
-		for k, v := range sh.objects[o].data {
-			sh.objects[o].Set(k, v/sum)
-		}
-	}
+	sh.NormalizeObjectSums()
 	return
 }
 

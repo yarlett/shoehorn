@@ -9,14 +9,14 @@ import (
 func main() {
 	// Load MNIST data.
 	t1 := time.Now()
-	sh := shoehorn.NewShoehorn("../data/mnist_data_train_subset.csv", 2)
+	sh := shoehorn.NewShoehorn("../data/mnist_data_train.csv", 2, 0.001)
 	fmt.Printf("Took %v to create data set of %d objects.\n", time.Now().Sub(t1), len(sh.ObjectIDs()))
 
 	// Constant learning parameters.
-	alpha := 0.50
+	alpha := 0.001
 
 	// Perform first round of gradient descent.
-	lr, momentum, l2, numepochs := 0.1, 0.8, 0.0, 250
+	lr, momentum, l2, numepochs := 1.0, 0.8, 0.0, 5000
 	sh.Learn(lr, momentum, l2, numepochs, alpha)
 	sh.WriteLocations("mnist_locations1.csv")
 

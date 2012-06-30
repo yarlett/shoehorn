@@ -12,7 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
+	//"time"
 )
 
 type Shoehorn struct {
@@ -24,13 +24,12 @@ type Shoehorn struct {
 	E           []float64
 	L           [][]float64
 	G           [][]float64
-	Ulst        [][]float64
-	Ucur        [][]float64
+	U           [][]float64
 	lr, mom     float64
 }
 
 //
-// Store method. Stores feature value for an object, and updates internal indices.
+// Object loading methods.
 //
 
 func (sh *Shoehorn) Store(object string, feature string, value float64) {
@@ -63,64 +62,108 @@ func (sh *Shoehorn) Store(object string, feature string, value float64) {
 //
 
 func (sh *Shoehorn) Learn(lr float64, mom float64, l2 float64, numepochs int, alpha float64) {
+	// var (
+	// 	knn, epoch, object_ix, j, tries, numtries int
+	// 	E0, E1, G1                                float64
+	// 	T, t                                      time.Time
+	// )
 	var (
-		knn, epoch, object_ix, j, tries, numtries int
-		E0, E1, G1                                float64
-		T, t                                      time.Time
+		knn, epoch, j int
+		Elst        float64
 	)
 	// Start timing.
-	T = time.Now()
+	//T = time.Now()
 	// Initialization.
-	sh.lr = lr
-	sh.mom = mom
+	//sh.lr = lr
+	//sh.mom = mom
 	knn = len(sh.objects)
-	numtries = 5
-	sh.Ulst = sh.GetObjectStore()
-	sh.Ucur = sh.GetObjectStore()
+	//numtries = 5
+	//sh.Ulst = sh.GetObjectStore()
+	//sh.Ucur = sh.GetObjectStore()
 	// Iterate over epochs of learning.
+	//sh.Gradients(knn, alpha, l2)
+
+	lr = 0.1
+
+	sh.U = sh.GetObjectStore()
+
 	sh.Gradients(knn, alpha, l2)
+	Elst = 0.0
+	for o := 0; o < len(sh.objects); o++ {
+		Elst += sh.E[o]
+	}
+
 	for epoch = 0; epoch < numepochs; epoch++ {
-		t = time.Now()
-		// Set the current error.
-		E0, _ = sh.Error()
-		// Update the positions until error is reduced or the max number of tries is exceeded.
-		for tries, E1 = 0, math.MaxFloat64; (E1 > E0) && (tries < numtries); tries++ {
-			// Apply the current update to object positions.
-			for object_ix = 0; object_ix < len(sh.objects); object_ix++ {
-				for j = 0; j < sh.ndims; j++ {
-					sh.Ucur[object_ix][j] = (sh.lr * sh.G[object_ix][j]) + (sh.mom * sh.Ulst[object_ix][j])
-					sh.L[object_ix][j] -= sh.Ucur[object_ix][j]
-				}
+		for o := 0; o < len(sh.objects); o++ {
+
+			gradient := sh.GradientObject(o, knn, alpha, l2)
+			for j = 0; j < sh.ndims; j++ {
+				sh.L[o][j] -= lr * gradient[j]
 			}
-			// Calculate the revised error.
-			sh.Gradients(knn, alpha, l2)
-			E1, G1 = sh.Error()
-			// If the error has been reduced then success.
-			if E1 < E0 {
-				// Increase the learning rate by a modest amount.
-				sh.lr *= 1.01
-				// Make the current update the last update (used as the momentum term in the next epoch).
-				for object_ix = 0; object_ix < len(sh.objects); object_ix++ {
-					for j = 0; j < sh.ndims; j++ {
-						sh.Ulst[object_ix][j] = sh.Ucur[object_ix][j]
-					}
-				}
-				// Otherwise we have failed to reduce error so try again.
-			} else {
-				// Undo the current update and zero the last update (to kill momentum).
-				for object_ix = 0; object_ix < len(sh.objects); object_ix++ {
-					for j = 0; j < sh.ndims; j++ {
-						sh.L[object_ix][j] += sh.Ucur[object_ix][j]
-						sh.Ulst[object_ix][j] = 0.0
-					}
-				}
-				// Reduce the learning rate significantly.
-				sh.lr *= 0.5
-			}
+
+			// sh.Gradients(knn, alpha, l2)
+			// for j = 0; j < sh.ndims; j++ {
+			// 	sh.L[o][j] -= lr * sh.G[o][j]
+			// }
 		}
-		fmt.Printf("Epoch %6d (%d tries): E=%.10e G=%.10e (lr=%.4e mom=%.4e alpha=%.4e l2=%.4e odist=%.4e; epoch took %v; %v elapsed).\n", epoch+1, tries, E1, G1, sh.lr, sh.mom, alpha, l2, sh.OriginDistance(), time.Now().Sub(t), time.Now().Sub(T))
+
+		sh.Gradients(knn, alpha, l2)
+		E, G := 0.0, 0.0
+		for o := 0; o < len(sh.objects); o++ {
+			E += sh.E[o]
+			G += sh.Magnitude(sh.G[o])
+		}
+
+		if E >= Elst {
+			lr *= 0.5
+		}
+		Elst = E
+
+		fmt.Printf("%10d: E=%.10e G=%.10e lr=%.10e\n", epoch, E, G, lr)
 	}
 }
+
+
+		// // Set the current error.
+		// E0, _ = sh.Error()
+		// // Update the positions until error is reduced or the max number of tries is exceeded.
+		// for tries, E1 = 0, math.MaxFloat64; (E1 > E0) && (tries < numtries); tries++ {
+		// 	// Apply the current update to object positions.
+		// 	for object_ix = 0; object_ix < len(sh.objects); object_ix++ {
+		// 		for j = 0; j < sh.ndims; j++ {
+		// 			sh.Ucur[object_ix][j] = (sh.lr * sh.G[object_ix][j]) + (sh.mom * sh.Ulst[object_ix][j])
+		// 			sh.L[object_ix][j] -= sh.Ucur[object_ix][j]
+		// 		}
+		// 	}
+		// 	// Calculate the revised error.
+		// 	sh.Gradients(knn, alpha, l2)
+		// 	E1, G1 = sh.Error()
+		// 	// If the error has been reduced then success.
+		// 	if E1 < E0 {
+		// 		// Increase the learning rate by a modest amount.
+		// 		sh.lr *= 1.01
+		// 		// Make the current update the last update (used as the momentum term in the next epoch).
+		// 		for object_ix = 0; object_ix < len(sh.objects); object_ix++ {
+		// 			for j = 0; j < sh.ndims; j++ {
+		// 				sh.Ulst[object_ix][j] = sh.Ucur[object_ix][j]
+		// 			}
+		// 		}
+		// 		// Otherwise we have failed to reduce error so try again.
+		// 	} else {
+		// 		// Undo the current update and zero the last update (to kill momentum).
+		// 		for object_ix = 0; object_ix < len(sh.objects); object_ix++ {
+		// 			for j = 0; j < sh.ndims; j++ {
+		// 				sh.L[object_ix][j] += sh.Ucur[object_ix][j]
+		// 				sh.Ulst[object_ix][j] = 0.0
+		// 			}
+		// 		}
+		// 		// Reduce the learning rate significantly.
+		// 		sh.lr *= 0.5
+		// 	}
+		// }
+		// fmt.Printf("Epoch %6d (%d tries): E=%.10e G=%.10e (lr=%.4e mom=%.4e alpha=%.4e l2=%.4e odist=%.4e; epoch took %v; %v elapsed).\n", epoch+1, tries, E1, G1, sh.lr, sh.mom, alpha, l2, sh.OriginDistance(), time.Now().Sub(t), time.Now().Sub(T))
+// 	}
+// }
 
 //
 // Gradient methods.
@@ -202,8 +245,55 @@ func (sh *Shoehorn) Gradient(object_ix int, knn int, alpha float64, l2 float64, 
 		sh.G[object_ix][j] += (l2 * sh.L[object_ix][j] / odist)
 	}
 	// Signal gradient computation is complete.
-	C <- true
+	C<-true
 }
+
+func (sh *Shoehorn) GradientObject(object_ix int, knn int, alpha float64, l2 float64) (gradient []float64) {
+	var (
+		or, j, feature_ix int
+		distance, weight, p, WP, W, Q, pre1, top1, top2  float64
+		N Weights
+		n WeightPair
+	)
+	gradient = make([]float64, sh.ndims)
+	// Iterate over objects getting reconstructed.
+	for or = 0; or < len(sh.objects); or++ {
+		if or != object_ix {
+			// Calculate nearest neighbors.
+			N = sh.Neighbors(or, knn)
+			// Calculate distance and weight.
+			distance = 0.0
+			for j = 0; j < sh.ndims; j++ {
+				distance += math.Pow(sh.L[object_ix][j] - sh.L[or][j], 2.0)
+			}
+			distance = math.Pow(distance, 0.5)
+			weight = math.Exp(-distance)
+			// Iterate over features of reconstructed object.
+			for feature_ix, p = range sh.objects[or].data {
+				// Calculate reconstruction terms.
+				WP, W = 0.0, 0.0
+				for _, n = range N {
+					WP += n.weight * sh.objects[n.object_ix].data[feature_ix]
+					W += n.weight
+				}
+				// Calculate reconstruction.
+				Q = (alpha * p) + ((1.0 - alpha) * (WP / W))
+				// Update gradient information.
+				pre1 = (alpha - 1.0) * p / Q
+				for j = 0; j < sh.ndims; j++ {
+					top1 = (weight * (sh.L[or][j] - sh.L[object_ix][j]) * sh.objects[object_ix].data[feature_ix]) / distance
+					top2 = (weight * (sh.L[or][j] - sh.L[object_ix][j])) / distance
+					gradient[j] += pre1 * (((W * top1) - (WP * top2)) / (W * W))
+				}
+			}
+		}
+	}
+	return
+}
+
+//
+// Rescaling methods.
+//
 
 // func (sh *Shoehorn) Rescale(radius float64) {
 // 	var (
@@ -302,15 +392,8 @@ func (sh *Shoehorn) Gradient(object_ix int, knn int, alpha float64, l2 float64, 
 // }
 
 //
-// Utility methods.
+// Nearest neighbor methods.
 //
-
-func (sh *Shoehorn) ObjectIDs() (object_ids []int) {
-	for id := 0; id < len(sh.objects); id++ {
-		object_ids = append(object_ids, id)
-	}
-	return
-}
 
 func (sh *Shoehorn) Neighbors(object_ix int, knn int) (N Weights) {
 	N = sh.Weights(object_ix)
@@ -344,23 +427,26 @@ func (sh *Shoehorn) Weights(object_ix int) (weights Weights) {
 	return
 }
 
-// Writes the current locations of objects to a file.
-func (sh *Shoehorn) WriteLocations(path string) {
-	// Initialize the output file.
-	of, err := os.Create(path)
-	if err != nil {
-		log.Fatal(err)
+//
+// Utility methods.
+//
+
+func (sh *Shoehorn) ObjectIDs() (object_ids []int) {
+	for id := 0; id < len(sh.objects); id++ {
+		object_ids = append(object_ids, id)
 	}
-	defer of.Close()
-	// Write object locations to file.
-	for object_name, object_ix := range sh.object_ixs {
-		line := make([]string, 0)
-		line = append(line, object_name)
-		for i := 0; i < sh.ndims; i++ {
-			line = append(line, fmt.Sprintf("%v", sh.L[object_ix][i]))
+	return
+}
+
+// Ensures that the feature values for all objects sum to 1.
+func (sh *Shoehorn) NormalizeObjectSums() {
+	for object_ix := 0; object_ix < len(sh.objects); object_ix++ {
+		sum := sh.objects[object_ix].Sum()
+		for k, v := range sh.objects[object_ix].data {
+			sh.objects[object_ix].Set(k, v/sum)
 		}
-		of.Write([]byte(fmt.Sprintf("%v\n", strings.Join(line, ","))))
 	}
+	return
 }
 
 // Returns the average distance of objects from the origin.
@@ -401,14 +487,36 @@ func (sh *Shoehorn) Error() (E, G float64) {
 	return
 }
 
+// Writes the current locations of objects to a file.
+func (sh *Shoehorn) WriteLocations(path string) {
+	// Initialize the output file.
+	of, err := os.Create(path)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer of.Close()
+	// Write object locations to file.
+	for object_name, object_ix := range sh.object_ixs {
+		line := make([]string, 0)
+		line = append(line, object_name)
+		for i := 0; i < sh.ndims; i++ {
+			line = append(line, fmt.Sprintf("%v", sh.L[object_ix][i]))
+		}
+		of.Write([]byte(fmt.Sprintf("%v\n", strings.Join(line, ","))))
+	}
+}
+
 //
 // Constructs a DataSet from a CSV file of {object_name, feature_name, feature_value} triples.
 //
 
-func NewShoehorn(filename string, ndims int) (sh *Shoehorn) {
+func NewShoehorn(filename string, ndims int, downsample float64) (sh *Shoehorn) {
 	var (
-		bfr *bufio.Reader
+		bfr                  *bufio.Reader
+		seenobjs, sampleobjs map[string]bool
 	)
+	seenobjs = make(map[string]bool)
+	sampleobjs = make(map[string]bool)
 	// Initialize the data set.
 	sh = &Shoehorn{ndims: ndims, feature_ixs: make(map[string]int), object_ixs: make(map[string]int)}
 	// Open the file for reading.
@@ -431,18 +539,22 @@ func NewShoehorn(filename string, ndims int) (sh *Shoehorn) {
 		strvals := strings.Split(string(line), ",")
 		if len(strvals) == 3 {
 			value_float, _ := strconv.ParseFloat(strvals[2], 64)
-			// Store the data in the data set.
-			sh.Store(strvals[0], strvals[1], value_float)
+			// If the object has not been seen before, decide whether to include it.
+			if ! seenobjs[strvals[0]] {
+				if rand.Float64() < downsample {
+					sampleobjs[strvals[0]] = true
+				}
+			}
+			seenobjs[strvals[0]] = true
+			// Store the data in the data set if the object is to be sampled.
+			if sampleobjs[strvals[0]] {
+				sh.Store(strvals[0], strvals[1], value_float)
+			}
 		}
 		// Read from the file for the next iteration.
 		line, isprefix, err = bfr.ReadLine()
 	}
 	// Normalize each vector so they sum to 1.
-	for object_ix := 0; object_ix < len(sh.objects); object_ix++ {
-		sum := sh.objects[object_ix].Sum()
-		for k, v := range sh.objects[object_ix].data {
-			sh.objects[object_ix].Set(k, v/sum)
-		}
-	}
+	sh.NormalizeObjectSums()
 	return
 }
