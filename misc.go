@@ -5,9 +5,9 @@ package shoehorn
 //
 
 type WeightPair struct {
-	object_ix int
-	distance  float64
-	weight    float64
+	object   int
+	distance float64
+	weight   float64
 }
 
 type Weights []WeightPair
@@ -15,6 +15,15 @@ type Weights []WeightPair
 func (w Weights) Len() int           { return len(w) }
 func (w Weights) Swap(i, j int)      { w[i], w[j] = w[j], w[i] }
 func (w Weights) Less(i, j int) bool { return w[i].weight > w[j].weight }
+
+//
+// Gradient information that can be passed around in a channel.
+//
+
+type GradientInfo struct {
+	object   int
+	gradient []float64
+}
 
 //
 // Function that returns the required value of a parameter given the current epoch and the start and end points of the parameter.
