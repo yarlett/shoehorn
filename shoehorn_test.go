@@ -12,7 +12,7 @@ var (
 	NDIMS int     = 2
 	KNN   int     = math.MaxInt32
 	ALPHA float64 = 0.01
-	L2    float64 = 0.0
+	L2    float64 = 0.10
 )
 
 // Returns a Shoehorn object initialized with some test data.
@@ -49,9 +49,7 @@ func TestGradient(t *testing.T) {
 	sh = GetTestData(50, 3)
 	h = 1e-6 // Step size used when approximating gradient.
 	// Compute and save gradient information for objects.
-	for o = 0; o < len(sh.objects); o++ {
-		G = append(G, sh.Gradient(o, KNN, ALPHA, L2))
-	}
+	G = sh.Gradients(KNN, ALPHA, L2)
 	// Iterate over the position of each object in each dimension.
 	for o = 0; o < len(sh.objects); o++ {
 		for j = 0; j < sh.ndims; j++ {
@@ -67,8 +65,8 @@ func TestGradient(t *testing.T) {
 			approx_grad = (Eh - Enh) / (2.0 * h)
 			// Compare actual and approximated gradients.
 			pcerr = math.Abs((G[o][j]-approx_grad)/G[o][j]) * 100.0
-			if pcerr > 0.1 {
-				t.Errorf("Discrepancy in gradient for object %3d in dimension %3d: %3.2f%% Error: h=%e: Analytic=%2.10e; Approximated=%2.10e.\n", o, j, pcerr, h, G[o][j], approx_grad)
+			if pcerr > 0.01 {
+				t.Errorf("Discrepancy in gradient for object %3d in dimension %3d: %3.6f%% Error: h=%e: Analytic=%2.10e; Approximated=%2.10e.\n", o, j, pcerr, h, G[o][j], approx_grad)
 			}
 		}
 	}

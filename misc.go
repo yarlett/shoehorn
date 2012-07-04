@@ -4,17 +4,17 @@ package shoehorn
 // Definitions allow objects to be sorted in order of decreasing weight.
 //
 
-type WeightPair struct {
+type Neighbor struct {
 	object   int
 	distance float64
 	weight   float64
 }
 
-type Weights []WeightPair
+type Neighbors []Neighbor
 
-func (w Weights) Len() int           { return len(w) }
-func (w Weights) Swap(i, j int)      { w[i], w[j] = w[j], w[i] }
-func (w Weights) Less(i, j int) bool { return w[i].weight > w[j].weight }
+func (N Neighbors) Len() int           { return len(N) }
+func (N Neighbors) Swap(i, j int)      { N[i], N[j] = N[j], N[i] }
+func (N Neighbors) Less(i, j int) bool { return N[i].weight > N[j].weight }
 
 //
 // Gradient information that can be passed around in a channel.
@@ -23,6 +23,21 @@ func (w Weights) Less(i, j int) bool { return w[i].weight > w[j].weight }
 type GradientInfo struct {
 	object   int
 	gradient []float64
+}
+
+//
+// Reconstruction structures.
+//
+
+type ReconstructionInfo struct {
+	object int
+	WP     map[int]float64
+	W      float64
+}
+
+type ReconstructionSet struct {
+	WPS map[int]map[int]float64
+	WS  map[int]float64
 }
 
 //
