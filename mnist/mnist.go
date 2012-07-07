@@ -13,10 +13,10 @@ func main() {
 	fmt.Printf("Took %v to create data set of %d objects.\n", time.Now().Sub(t1), len(sh.ObjectIDs()))
 
 	// Constant learning parameters.
-	alpha := 0.01
+	alpha := 0.000001
 
 	// Assign initial positions.
-	sh.InitialPositions(5, alpha)
+	sh.InitialPositions(10, alpha)
 	sh.WriteLocations("mnist_locations1.csv")
 
 	// // Perform first round of gradient descent.

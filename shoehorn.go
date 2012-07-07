@@ -59,15 +59,26 @@ func (sh *Shoehorn) Store(object_name string, feature_name string, value float64
 
 func (sh *Shoehorn) InitialPositions(num_categories int, alpha float64) {
 	var (
-		o, j, c, current_category, epoch           int
-		delta, remove_delta, add_delta, best_delta float64
+		o, j, c, epoch           int
+		//delta, remove_delta, add_delta, best_delta float64
+		best_delta, delta float64
 		inds                                       []int
 		deltas, cluster_center                     []float64
 		categories                                 []map[int]bool
 		t                                          time.Time
+		S                                          [][]float64
 	)
 	// Initialize storage for error deltas.
 	deltas = make([]float64, num_categories)
+	// Precompute all pairwise object errors.
+	S = make([][]float64, len(sh.objects))
+	for o1 := 0; o1 < len(sh.objects); o1++ {
+		S[o1] = make([]float64, len(sh.objects))
+		for o2 := 0; o2 < len(sh.objects); o2++ {
+			S[o1][o2] = sh.objects[o1].KLDivergence(sh.objects[o2], alpha)
+		}
+	}
+	fmt.Println("Computed!")
 	// Initialize the categories.
 	categories = make([]map[int]bool, num_categories)
 	for c = 0; c < len(categories); c++ {
@@ -77,35 +88,48 @@ func (sh *Shoehorn) InitialPositions(num_categories int, alpha float64) {
 	for o = 0; o < len(sh.objects); o++ {
 		categories[rand.Intn(num_categories)][o] = true
 	}
-	fmt.Printf("Initial Positioning Random Assignment: E=%e.\n", sh.GlobalCategoryError(categories, alpha))
+	fmt.Printf("Initial Positioning Random Assignment: E=%e.\n", sh.GlobalCategoryError(categories, S))
 	// Reassign the objects to categories in order to improve the coherency of the categories.
-	for epoch = 0; epoch < 10; epoch++ {
+	for epoch = 0; epoch < 30; epoch++ {
 		t = time.Now()
 		for o = 0; o < len(sh.objects); o++ {
-			// Find the current category the object is assigned to.
-			for current_category = 0; current_category < len(categories); current_category++ {
-				if categories[current_category][o] {
-					break
-				}
-			}
-			// Get the error delta for removing the object from its current category.
-			delta = sh.CategoryError(categories[current_category], alpha)
-			delete(categories[current_category], o)
-			remove_delta = sh.CategoryError(categories[current_category], alpha) - delta
-			// Calculate error delta for adding the object t each category.
+
+			// Remove from all categories.
 			for c = 0; c < len(categories); c++ {
-				// If object is already in the category then the delta is 0.
-				if c == current_category {
-					deltas[c] = 0.0
-				// Otherwise compute the delta associated with removing object from its current category and putting it in c.
-				} else {
-					delta = sh.CategoryError(categories[c], alpha)
-					categories[c][o] = true
-					add_delta = sh.CategoryError(categories[c], alpha) - delta
-					delete(categories[c], o)
-					deltas[c] = remove_delta + add_delta
-				}
+				delete(categories[c], o)
 			}
+			// Get global error when assigned to all categories.
+			for c = 0; c < len(categories); c++ {
+				categories[c][o] = true
+				deltas[c] = sh.GlobalCategoryError(categories, S)
+				delete(categories[c], o)
+			}
+
+			// // Find the current category the object is assigned to.
+			// for current_category = 0; current_category < len(categories); current_category++ {
+			// 	if categories[current_category][o] {
+			// 		break
+			// 	}
+			// }
+			// // Get the error delta for removing the object from its current category.
+			// delta = sh.CategoryError(categories[current_category], S)
+			// delete(categories[current_category], o)
+			// remove_delta = sh.CategoryError(categories[current_category], S) - delta
+			// // Calculate error delta for adding the object t each category.
+			// for c = 0; c < len(categories); c++ {
+			// 	// If object is already in the category then the delta is 0.
+			// 	if c == current_category {
+			// 		deltas[c] = 0.0
+			// 	// Otherwise compute the delta associated with removing object from its current category and putting it in c.
+			// 	} else {
+			// 		delta = sh.CategoryError(categories[c], S)
+			// 		categories[c][o] = true
+			// 		add_delta = sh.CategoryError(categories[c], S) - delta
+			// 		delete(categories[c], o)
+			// 		deltas[c] = remove_delta + add_delta
+			// 	}
+			// }
+
 			// Identify the category whose delta is lowest (include ties if they occur).
 			best_delta = math.MaxFloat64
 			for _, delta = range deltas {
@@ -123,7 +147,7 @@ func (sh *Shoehorn) InitialPositions(num_categories int, alpha float64) {
 			categories[inds[rand.Intn(len(inds))]][o] = true
 		}
 		// Assess the category goodnesses and report.
-		fmt.Printf("Initial Positioning Epoch %d: E=%e (took %v).\n", epoch, sh.GlobalCategoryError(categories, alpha), time.Now().Sub(t))
+		fmt.Printf("Initial Positioning Epoch %d: E=%e (took %v).\n", epoch, sh.GlobalCategoryError(categories, S), time.Now().Sub(t))
 	}
 	// Assign each category to its own cluster.
 	cluster_center = make([]float64, sh.ndims)
@@ -141,29 +165,30 @@ func (sh *Shoehorn) InitialPositions(num_categories int, alpha float64) {
 	}
 }
 
-func (sh *Shoehorn) GlobalCategoryError(categories []map[int]bool, alpha float64) (E float64) {
+func (sh *Shoehorn) GlobalCategoryError(categories []map[int]bool, S [][]float64) (E float64) {
 	for c := 0; c < len(categories); c++ {
-		E += sh.CategoryError(categories[c], alpha)
+		E += sh.CategoryError(categories[c], S)
 	}
 	return
 }
 
-func (sh *Shoehorn) CategoryError(category map[int]bool, alpha float64) (E float64) {
+func (sh *Shoehorn) CategoryError(category map[int]bool, S[][]float64) (E float64) {
 	var (
 		o1, o2 int
-		N      float64
+		// N      float64
 	)
 	for o1, _ = range category {
 		for o2, _ = range category {
 			if o2 != o1 {
-				E += sh.objects[o1].KLDivergence(sh.objects[o2], alpha)
-				N += 1.0
+				E += S[o1][o2]
+				// E += sh.objects[o1].KLDivergence(sh.objects[o2], alpha)
+				// N += 1.0
 			}
 		}
 	}
-	if N > 0.0 {
-		E /= N
-	}
+	// if N > 0.0 {
+	// 	E /= N
+	// }
 	return
 }
 
