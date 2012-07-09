@@ -57,107 +57,75 @@ func (sh *Shoehorn) Store(object_name string, feature_name string, value float64
 // Initial positions.
 //
 
-func (sh *Shoehorn) InitialPositions(num_categories int, alpha float64) {
+func (sh *Shoehorn) InitialPositions(num_categories int, num_epochs int, alpha float64) {
 	var (
-		o, j, c, epoch           int
-		//delta, remove_delta, add_delta, best_delta float64
-		best_delta, delta float64
-		inds                                       []int
-		deltas, cluster_center                     []float64
-		categories                                 []map[int]bool
-		t                                          time.Time
-		S                                          [][]float64
+		o, o1, o2, j, c, epoch, new_category int
+		E0, E1, temperature                  float64
+		cluster_center                       []float64
+		C                                    []map[int]bool
+		I                                    map[int]int
+		T                                    time.Time
+		D                                    [][]float64
 	)
-	// Initialize storage for error deltas.
-	deltas = make([]float64, num_categories)
-	// Precompute all pairwise object errors.
-	S = make([][]float64, len(sh.objects))
-	for o1 := 0; o1 < len(sh.objects); o1++ {
-		S[o1] = make([]float64, len(sh.objects))
-		for o2 := 0; o2 < len(sh.objects); o2++ {
-			S[o1][o2] = sh.objects[o1].KLDivergence(sh.objects[o2], alpha)
+	// Precompute all pairwise object distances.
+	T = time.Now()
+	D = make([][]float64, len(sh.objects))
+	for o1 = 0; o1 < len(sh.objects); o1++ {
+		D[o1] = make([]float64, len(sh.objects))
+		for o2 = 0; o2 < len(sh.objects); o2++ {
+			D[o1][o2] = sh.objects[o1].KLDivergence(sh.objects[o2], alpha)
 		}
 	}
-	fmt.Println("Computed!")
-	// Initialize the categories.
-	categories = make([]map[int]bool, num_categories)
-	for c = 0; c < len(categories); c++ {
-		categories[c] = make(map[int]bool)
+	fmt.Printf("Divergences precomputed in %v.\n", time.Now().Sub(T))
+	// Initialize the categories by random assignment.
+	C = make([]map[int]bool, num_categories)
+	for c = 0; c < len(C); c++ {
+		C[c] = make(map[int]bool)
 	}
-	// Randomly assign objects to the categories.
+	I = make(map[int]int)
 	for o = 0; o < len(sh.objects); o++ {
-		categories[rand.Intn(num_categories)][o] = true
+		I[o] = rand.Intn(num_categories)
+		C[I[o]][o] = true
 	}
-	fmt.Printf("Initial Positioning Random Assignment: E=%e.\n", sh.GlobalCategoryError(categories, S))
+	fmt.Printf("Initial Positioning Random Assignment: E=%e.\n", sh.GlobalCategoryError(C, D))
 	// Reassign the objects to categories in order to improve the coherency of the categories.
-	for epoch = 0; epoch < 30; epoch++ {
-		t = time.Now()
+	T = time.Now()
+	E0 = sh.GlobalCategoryError(C, D)
+	for epoch = 0; epoch < num_epochs; epoch++ {
+		temperature = math.Pow(10.0, ParameterSetter(epoch, 0, 3.0, num_epochs, -1.0))
 		for o = 0; o < len(sh.objects); o++ {
-
-			// Remove from all categories.
-			for c = 0; c < len(categories); c++ {
-				delete(categories[c], o)
+			// Randomly propose a new category for the object.
+			for new_category = rand.Intn(num_categories); new_category == I[o]; {
+				new_category = rand.Intn(num_categories)
 			}
-			// Get global error when assigned to all categories.
-			for c = 0; c < len(categories); c++ {
-				categories[c][o] = true
-				deltas[c] = sh.GlobalCategoryError(categories, S)
-				delete(categories[c], o)
+			// Measure the error when the object is assigned to this category.
+			delete(C[I[o]], o)
+			C[new_category][o] = true
+			E1 = sh.GlobalCategoryError(C, D)
+			// Accept or reject the new category.
+			if rand.Float64() < math.Exp((E0-E1)/temperature) {
+				I[o] = new_category
+				E0 = E1
+			} else {
+				delete(C[new_category], o)
+				C[I[o]][o] = true
 			}
-
-			// // Find the current category the object is assigned to.
-			// for current_category = 0; current_category < len(categories); current_category++ {
-			// 	if categories[current_category][o] {
-			// 		break
-			// 	}
-			// }
-			// // Get the error delta for removing the object from its current category.
-			// delta = sh.CategoryError(categories[current_category], S)
-			// delete(categories[current_category], o)
-			// remove_delta = sh.CategoryError(categories[current_category], S) - delta
-			// // Calculate error delta for adding the object t each category.
-			// for c = 0; c < len(categories); c++ {
-			// 	// If object is already in the category then the delta is 0.
-			// 	if c == current_category {
-			// 		deltas[c] = 0.0
-			// 	// Otherwise compute the delta associated with removing object from its current category and putting it in c.
-			// 	} else {
-			// 		delta = sh.CategoryError(categories[c], S)
-			// 		categories[c][o] = true
-			// 		add_delta = sh.CategoryError(categories[c], S) - delta
-			// 		delete(categories[c], o)
-			// 		deltas[c] = remove_delta + add_delta
-			// 	}
-			// }
-
-			// Identify the category whose delta is lowest (include ties if they occur).
-			best_delta = math.MaxFloat64
-			for _, delta = range deltas {
-				if delta < best_delta {
-					best_delta = delta
-				}
-			}
-			inds = nil
-			for c, delta = range deltas {
-				if delta == best_delta {
-					inds = append(inds, c)
-				}
-			}
-			// Randomly assign the object to any categories tied for biggest reduction delta.
-			categories[inds[rand.Intn(len(inds))]][o] = true
 		}
 		// Assess the category goodnesses and report.
-		fmt.Printf("Initial Positioning Epoch %d: E=%e (took %v).\n", epoch, sh.GlobalCategoryError(categories, S), time.Now().Sub(t))
+		if epoch%1000 == 0 {
+			fmt.Printf("Initial Positioning Epoch %d: E=%e Temp=%e (took %v).\n", epoch, sh.GlobalCategoryError(C, D), temperature, time.Now().Sub(T))
+			T = time.Now()
+		}
 	}
 	// Assign each category to its own cluster.
 	cluster_center = make([]float64, sh.ndims)
-	for c = 0; c < len(categories); c++ {
+	for c = 0; c < len(C); c++ {
 		// Set cluster center.
 		for j = 0; j < sh.ndims; j++ {
 			cluster_center[j] = rand.NormFloat64() * 5.0
 		}
 		// Assign points around this cluster.
-		for o, _ = range categories[c] {
+		for o, _ = range C[c] {
 			for j = 0; j < sh.ndims; j++ {
 				sh.L[o][j] = cluster_center[j] + (rand.NormFloat64() * 0.3)
 			}
@@ -165,30 +133,24 @@ func (sh *Shoehorn) InitialPositions(num_categories int, alpha float64) {
 	}
 }
 
-func (sh *Shoehorn) GlobalCategoryError(categories []map[int]bool, S [][]float64) (E float64) {
+func (sh *Shoehorn) GlobalCategoryError(categories []map[int]bool, D [][]float64) (E float64) {
 	for c := 0; c < len(categories); c++ {
-		E += sh.CategoryError(categories[c], S)
+		E += sh.CategoryError(categories[c], D)
 	}
 	return
 }
 
-func (sh *Shoehorn) CategoryError(category map[int]bool, S[][]float64) (E float64) {
+func (sh *Shoehorn) CategoryError(category map[int]bool, D [][]float64) (E float64) {
 	var (
 		o1, o2 int
-		// N      float64
 	)
 	for o1, _ = range category {
 		for o2, _ = range category {
 			if o2 != o1 {
-				E += S[o1][o2]
-				// E += sh.objects[o1].KLDivergence(sh.objects[o2], alpha)
-				// N += 1.0
+				E += D[o1][o2]
 			}
 		}
 	}
-	// if N > 0.0 {
-	// 	E /= N
-	// }
 	return
 }
 

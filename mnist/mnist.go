@@ -16,7 +16,7 @@ func main() {
 	alpha := 0.000001
 
 	// Assign initial positions.
-	sh.InitialPositions(10, alpha)
+	sh.InitialPositions(10, 50000, alpha)
 	sh.WriteLocations("mnist_locations1.csv")
 
 	// // Perform first round of gradient descent.
