@@ -28,6 +28,7 @@ if __name__ == '__main__':
 		for n in sorted(D):
 			dat = np.array(D[n], 'd')
 			lb.plot(dat[:, 0], dat[:, 1], symbols[n], label='{}'.format(n))
-		lb.legend(loc=0)
+		# lb.legend(loc=0)
 		lb.title("Positions {:d}".format(i))
+		lb.axis("equal")
 	lb.show()
