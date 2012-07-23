@@ -21,7 +21,7 @@ func (fv *FeatureVector) Sum() (sum float64) {
 
 func (fv *FeatureVector) Mag() (mag float64) {
 	for _, v := range fv.data {
-		mag += (v * v)
+		mag += v * v
 	}
 	mag = math.Pow(mag, 0.5)
 	return
@@ -38,6 +38,6 @@ func (fv *FeatureVector) Cosine(fvo *FeatureVector) (cos float64) {
 	for feature, p := range fv.data {
 		cos += (p * fvo.data[feature])
 	}
-	cos /= (fv.Mag() * fvo.Mag())
+	cos = cos / (fv.Mag() * fvo.Mag())
 	return
 }
