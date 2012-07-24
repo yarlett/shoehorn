@@ -181,15 +181,16 @@ func (sh *Shoehorn) GlobalCategoryError(num_categories int, I map[int]int, D [][
 
 func (sh *Shoehorn) Learn(lr float64, mom float64, l2 float64, numepochs int, alpha float64) {
 	var (
-		epoch, o, j, tries, maxtries int
-		min_weight, Elst, Ecur, G    float64
-		gradients, U                 [][]float64
-		T, t                         time.Time
+		epoch, o, j, tries, maxtries        int
+		min_weight, Elst, Ecur, G, max_move float64
+		gradients, U, Ucur                  [][]float64
+		T, t                                time.Time
 	)
 	// Start timing.
 	T = time.Now()
 	// Initialization.
 	min_weight = 0.0
+	max_move = 0.001
 	maxtries = 10
 	U = sh.GetObjectStore()
 	// Perform learning.
@@ -197,7 +198,7 @@ func (sh *Shoehorn) Learn(lr float64, mom float64, l2 float64, numepochs int, al
 		t = time.Now()
 		// Get gradient for all objects.
 		gradients = sh.Gradients(min_weight, alpha, l2)
-		// Calculate magnitude of gradient vectors.
+		// Calculate magnitude of gradient vectors, and find the smallest gradient.
 		G = 0.0
 		for o = 0; o < len(sh.objects); o++ {
 			G += sh.Magnitude(gradients[o])
@@ -205,22 +206,31 @@ func (sh *Shoehorn) Learn(lr float64, mom float64, l2 float64, numepochs int, al
 		G /= float64(len(sh.objects))
 		// Update positions of objects.
 		for tries = 0; tries < maxtries; tries++ {
+			// Create current update.
+			Ucur = sh.GetObjectStore()
 			// Update position of each object.
 			for o = 0; o < len(sh.objects); o++ {
+				// Set the current update.
 				for j = 0; j < sh.ndims; j++ {
-					sh.L[o][j] -= (lr * gradients[o][j]) + (mom * U[o][j])
+					Ucur[o][j] = (lr * gradients[o][j]) + (mom * U[o][j])
+				}
+				// Scale dow the current update if it is larger than the maximum acceptable move.
+				if sh.Magnitude(Ucur[o]) > max_move {
+					for j = 0; j < sh.ndims; j++ {
+						Ucur[o][j] *= (max_move / sh.Magnitude(Ucur[o]))
+					}
+				}
+				// Apply the current update.
+				for j = 0; j < sh.ndims; j++ {
+					sh.L[o][j] -= Ucur[o][j]
 				}
 			}
 			// Compute error.
 			Ecur = sh.Error(min_weight, alpha, l2) / float64(len(sh.objects))
 			// Perform actions depending on whether error was reduced or not.
 			if Ecur < Elst {
-				// Set update vectors.
-				for o = 0; o < len(sh.objects); o++ {
-					for j = 0; j < sh.ndims; j++ {
-						U[o][j] = (lr * gradients[o][j]) + (mom * U[o][j])
-					}
-				}
+				// Set the update for the next epoch.
+				U = Ucur
 				// Update the error and break out of the loop.
 				Elst = Ecur
 				break
@@ -228,7 +238,7 @@ func (sh *Shoehorn) Learn(lr float64, mom float64, l2 float64, numepochs int, al
 				// Unwind the changes and reduce the learning rate.
 				for o = 0; o < len(sh.objects); o++ {
 					for j = 0; j < sh.ndims; j++ {
-						sh.L[o][j] += (lr * gradients[o][j]) + (mom * U[o][j])
+						sh.L[o][j] += Ucur[o][j]
 					}
 				}
 				lr *= 0.5
