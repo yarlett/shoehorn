@@ -60,22 +60,22 @@ func (sh *Shoehorn) Store(object_name string, feature_name string, value float64
 func (sh *Shoehorn) InitialPositions(num_categories int, temp0 float64, temp1 float64, temp_decay float64, alpha float64) {
 	var (
 		o, o1, o2, epoch, cur_category, new_category, c, j int
-		temperature, E0, E1, delta                         float64
+		temperature, E, delta                              float64
 		cluster_center                                     []float64
 		I                                                  map[int]int
 		T                                                  time.Time
-		S                                                  [][]float64
+		D                                                  [][]float64
 	)
-	// Precompute all pairwise cosines.
+	// Precompute all pairwise distances.
 	T = time.Now()
-	S = make([][]float64, len(sh.objects))
+	D = make([][]float64, len(sh.objects))
 	for o1 = 0; o1 < len(sh.objects); o1++ {
-		S[o1] = make([]float64, len(sh.objects))
-		for o2 = 0; o2 < len(sh.objects); o2++ {
-			S[o1][o2] = sh.objects[o1].Cosine(sh.objects[o2])
+		D[o1] = make([]float64, o1)
+		for o2 = 0; o2 < o1; o2++ {
+			D[o1][o2] = (1.0 - sh.objects[o1].Cosine(sh.objects[o2])) / 2.0
 		}
 	}
-	fmt.Printf("Divergences precomputed in %v.\n", time.Now().Sub(T))
+	fmt.Printf("Distances precomputed in %v.\n", time.Now().Sub(T))
 	// Compute error of "best" solution (achieved by grouping objects according to their actual categories).
 	I = make(map[int]int)
 	for object_name, object_ix := range sh.object_ixs {
@@ -83,16 +83,16 @@ func (sh *Shoehorn) InitialPositions(num_categories int, temp0 float64, temp1 fl
 		category, _ := strconv.ParseInt(strbits[0], 10, 32)
 		I[object_ix] = int(category)
 	}
-	fmt.Printf("THEORETICAL MINIMUM ERROR = %e\n", sh.GlobalCategoryError(num_categories, I, S))
+	fmt.Printf("THEORETICAL MINIMUM ERROR = %e\n", sh.GlobalCategoryError(num_categories, I, D))
 	// Initialize the categories by random assignment.
 	rand.Seed(time.Now().UnixNano())
 	I = make(map[int]int)
-	for o := 0; o < len(sh.objects); o++ {
+	for o = 0; o < len(sh.objects); o++ {
 		I[o] = rand.Intn(num_categories)
 	}
 	// Reassign the objects to categories in order to improve the coherency of the categories.
 	T = time.Now()
-	E0 = sh.GlobalCategoryError(num_categories, I, S)
+	E = sh.GlobalCategoryError(num_categories, I, D)
 	temperature = temp0
 	for epoch = 0; ; epoch++ {
 		// Reassign objects to categories.
@@ -104,18 +104,17 @@ func (sh *Shoehorn) InitialPositions(num_categories int, temp0 float64, temp1 fl
 			}
 			I[o] = new_category
 			// Calculate the error delta if the object were assigned to the new category.
-			E1 = sh.GlobalCategoryError(num_categories, I, S)
-			delta = E1 - E0
+			delta = sh.GlobalCategoryError(num_categories, I, D) - E
 			// Accept or reject the new category based on its error delta and the current temperature.
 			if rand.Float64() < math.Exp(-delta/temperature) {
-				E0 = E1
+				E += delta
 			} else {
 				I[o] = cur_category
 			}
 		}
 		// Assess the category goodnesses and report.
 		if epoch%10 == 0 {
-			fmt.Printf("Initial Positioning Epoch %d: E=%e Temp=%e (took %v).\n", epoch, sh.GlobalCategoryError(num_categories, I, S), temperature, time.Now().Sub(T))
+			fmt.Printf("Initial Positioning Epoch %d: E=%e Temp=%e (took %v).\n", epoch, sh.GlobalCategoryError(num_categories, I, D), temperature, time.Now().Sub(T))
 			T = time.Now()
 		}
 		// Reduce temperature.
@@ -141,39 +140,40 @@ func (sh *Shoehorn) InitialPositions(num_categories int, temp0 float64, temp1 fl
 	}
 }
 
-func (sh *Shoehorn) GlobalCategoryError(num_categories int, I map[int]int, S [][]float64) (error float64) {
+// Returns sum of mean distance in each category.
+func (sh *Shoehorn) GlobalCategoryError(num_categories int, I map[int]int, D [][]float64) (error float64) {
 	for o1 := 0; o1 < len(sh.objects); o1++ {
 		for o2 := 0; o2 < o1; o2++ {
 			if I[o1] == I[o2] {
-				error += (1.0 - S[o1][o2])
+				error += D[o1][o2]
 			}
 		}
 	}
 	return
+	// C := make(map[int]int)
+	// S := make(map[int]float64)
+	// N := make(map[int]float64)
+	// for o1 := 0; o1 < len(sh.objects); o1++ {
+	// 	// Keep track of categories encountered.
+	// 	C[I[o1]] += 1
+	// 	// Update sum of distances for the category.
+	// 	for o2 := 0; o2 < o1; o2++ {
+	// 		if I[o1] == I[o2] {
+	// 			S[I[o1]] += D[o1][o2]
+	// 			N[I[o1]] += 1.0
+	// 		}
+	// 	}
+	// }
+	// // Return sum of maximum distances in each category (return maximum error if size of category is 1 to prevent degenerate solutions).
+	// for category, category_size := range C {
+	// 	if category_size <= 10 {
+	// 		error += 1.0
+	// 	} else {
+	// 		error += S[category] / N[category]
+	// 	}
+	// }
+	// return
 }
-
-// func (sh *Shoehorn) CategoryPerformance(category int, I map[int]int, S [][]float64) (performance float64) {
-// 	for o1 := 0; o1 < len(sh.objects); o1++ {
-// 		if I[o1] == category {
-// 			for o2 := 0; o2 < o1; o2++ {
-// 				if I[o2] == category {
-// 					performance += S[o1][o2]
-// 				}
-// 			}
-// 		}
-// 	}
-// 	return
-// }
-
-// func (sh *Shoehorn) GlobalCategoryErrorDelta(object int, new_category int, I map[int]int) (delta float64) {
-// 	cur_category := I[object]
-// 	e0 := sh.CategoryError(cur_category, I) + sh.CategoryError(new_category, I)
-// 	I[object] = new_category
-// 	e1 := sh.CategoryError(cur_category, I) + sh.CategoryError(new_category, I)
-// 	I[object] = cur_category
-// 	delta = e1 - e0
-// 	return
-// }
 
 //
 // Learning method.
@@ -269,7 +269,7 @@ func (sh *Shoehorn) Error(min_weight float64, alpha float64, l2 float64) (E floa
 		}
 		// Add punishment for distance from origin.
 		for j = 0; j < sh.ndims; j++ {
-			E += l2 * sh.L[object][j] * sh.L[object][j]
+			E += 0.5 * l2 * sh.L[object][j] * sh.L[object][j]
 		}
 	}
 	return
@@ -363,7 +363,7 @@ func (sh *Shoehorn) Gradient(object int, min_weight float64, alpha float64, l2 f
 	}
 	// Add punishment for distance from origin.
 	for j = 0; j < sh.ndims; j++ {
-		gradient[j] += 2.0 * l2 * sh.L[object][j]
+		gradient[j] += l2 * sh.L[object][j]
 	}
 	return
 }

@@ -15,14 +15,14 @@ func main() {
 	// Constant learning parameters.
 	alpha := 0.01
 
-	// Assign initial positions.
-	sh.InitialPositions(10, 1.0, 0.1, 1.0-1e-2, alpha)
-	sh.WriteLocations("mnist_locations1.csv")
-
-	// // Perform first round of gradient descent.
-	// lr, momentum, l2, numepochs := 0.1, 0.75, 0.0, 100
-	// sh.Learn(lr, momentum, l2, numepochs, alpha)
+	// // Assign initial positions.
+	// sh.InitialPositions(10, 0.01, 0.0001, 1.0-1e-2, alpha)
 	// sh.WriteLocations("mnist_locations1.csv")
+
+	// Perform first round of gradient descent.
+	lr, momentum, l2, numepochs := 0.01, 0.25, 0.5, 400
+	sh.Learn(lr, momentum, l2, numepochs, alpha)
+	sh.WriteLocations("mnist_locations1.csv")
 
 	// // Perform repositioning search.
 	// cycles, knn := 3, 15
