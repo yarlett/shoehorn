@@ -10,7 +10,7 @@ import (
 // Some general parameters.
 var (
 	NDIMS      int     = 2
-	MAX_WEIGHT float64 = 0.0
+	MIN_WEIGHT float64 = 0.0
 	ALPHA      float64 = 0.01
 	L2         float64 = 0.10
 )
@@ -37,6 +37,26 @@ func GetTestData(nobjs, ndims int) (sh Shoehorn) {
 	return
 }
 
+// Test that the object reconstructions are normalized discrete probability distributions.
+func TestReconstructions(t *testing.T) {
+	// Initialize the test data.
+	sh := GetTestData(50, 3)
+	// Get the object reconstruction data.
+	R := sh.Reconstructions(MIN_WEIGHT)
+	// Check the reconstruction of each object.
+	for o := 0; o < sh.nobjs; o++ {
+		sump, sumq := 0.0, 0.0
+		for f, p := range sh.objects[o].data {
+			q := (ALPHA * p) + ((1.0-ALPHA)*(R.WPS[o][f]/R.WS[o]))
+			sump += p
+			sumq += q
+		}
+		if (math.Abs(sump-1.0) > 1e-10) || (math.Abs(sumq-1.0) > 1e-10) {
+			t.Errorf("Problem with reconstruction of object %d: sump=%e sumq=%e.\n", o, sump, sumq)
+		}
+	}
+}
+
 // Checks that the gradient function and its approximation are close to one another.
 func TestGradient(t *testing.T) {
 	var (
@@ -49,16 +69,16 @@ func TestGradient(t *testing.T) {
 	sh = GetTestData(50, 3)
 	h = 1e-6 // Step size used when approximating gradient.
 	// Compute and save gradient information for objects.
-	G = sh.Gradients(MAX_WEIGHT, ALPHA, L2)
+	G = sh.Gradients(MIN_WEIGHT, ALPHA, L2)
 	// Iterate over the position of each object in each dimension.
 	for o = 0; o < len(sh.objects); o++ {
 		for j = 0; j < sh.ndims; j++ {
 			// Calculate error at x - h.
 			sh.L[o][j] -= h
-			Enh = sh.Error(MAX_WEIGHT, ALPHA, L2)
+			Enh = sh.Error(MIN_WEIGHT, ALPHA, L2)
 			// Calculate error at x + h.
 			sh.L[o][j] += 2.0 * h
-			Eh = sh.Error(MAX_WEIGHT, ALPHA, L2)
+			Eh = sh.Error(MIN_WEIGHT, ALPHA, L2)
 			// Reset x to original position.
 			sh.L[o][j] -= h
 			// Calculate approximate gradient.
