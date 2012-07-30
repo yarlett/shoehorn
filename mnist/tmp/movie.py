@@ -14,7 +14,7 @@ symbols = {
 	'9': 'h',
 }
 
-def makeplot(filename):
+def makeplot(filename, axis_limit=4.0):
 	# Extract frame number.
 	m = re.match("positions_(?P<num>\d+).csv", filename)
 	frame = int(m.groups(0)[0])
@@ -32,14 +32,13 @@ def makeplot(filename):
 	for n in sorted(D):
 		dat = np.array(D[n], "d")
 		lb.plot(dat[:, 0], dat[:, 1], symbols[n], label='{}'.format(n))
-	lim = 0.20
-	lb.axis([-lim, lim, -lim, lim])
+	lb.axis([-axis_limit, axis_limit, -axis_limit, axis_limit])
 	plotname = "{:06d}.png".format(frame)
 	lb.savefig(plotname)
 
 if __name__ == "__main__":
 	# Get a list of all the files.
-	fnames = [fname for fname in os.listdir("/Users/dan/mygo/src/shoehorn/mnist/tmp") if re.match(r"positions_(?P<num>\d+)\.csv", fname)]
+	fnames = [fname for fname in os.listdir(os.path.split(os.path.abspath(__file__))[0]) if re.match(r"positions_(?P<num>\d+)\.csv", fname)]
 	# Make the plots.
 	for fname in fnames:
 		makeplot(fname)

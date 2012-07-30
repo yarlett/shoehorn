@@ -59,28 +59,19 @@ func (sh *Shoehorn) Store(object_name string, feature_name string, value float64
 // Learn method. Performs gradient-descent on object locations.
 //
 
-func (sh *Shoehorn) Learn(max_move float64, mom float64, l2 float64, numepochs int, alpha float64) {
+func (sh *Shoehorn) Learn(max_move float64, mom float64, l2 float64, numepochs int, alpha float64, output_prefix string) {
 	var (
-		epoch, o, j, tries, maxtries    int
-		min_weight, Elst, Ecur, G, maxU, minU float64
-		STEPS, E0, E1 []float64
-		gradients, U, Ucur              [][]float64
-		T, t                            time.Time
+		epoch, o, j, tries, maxtries int
+		min_weight, Elst, Ecur, G    float64
+		gradients, Ulst, Ucur        [][]float64
+		T, t                         time.Time
 	)
 	// Initialization.
 	T = time.Now()
 	min_weight = 0.0
 	maxtries = 10
-	U = sh.GetObjectStore()
+	Ulst = sh.GetObjectStore()
 	// Perform learning.
-
-
-	for o = 0; o < sh.nobjs; o++ {
-		STEPS = append(STEPS, max_move)
-	}
-	E0 = sh.ErrorList(min_weight, alpha, l2)
-
-
 	for Elst, epoch = math.MaxFloat64, 0; (epoch < numepochs) && (max_move > 1e-6); epoch++ {
 		t = time.Now()
 		// Get gradient for all objects.
@@ -95,36 +86,13 @@ func (sh *Shoehorn) Learn(max_move float64, mom float64, l2 float64, numepochs i
 		for tries = 0; tries < maxtries; tries++ {
 			// Set the current updates.
 			Ucur = sh.GetObjectStore()
-			minU = math.MaxFloat64
-			maxU = 0.0
 			for o = 0; o < sh.nobjs; o++ {
 				for j = 0; j < sh.ndims; j++ {
-					Ucur[o][j] = (gradients[o][j] + (mom * U[o][j]))
-				}
-				tmpU := sh.Magnitude(Ucur[o])
-				if tmpU < minU {
-					minU = tmpU
-				}
-				if tmpU > maxU {
-					maxU = tmpU
+					Ucur[o][j] = (gradients[o][j] + (mom * Ulst[o][j]))
 				}
 			}
-			//fmt.Printf("  minU=%v maxU=%v --> %.2fx\n", minU, maxU, maxU/minU)
-
-			// Rescale the updates so the largest one has magnitude max_move.
-			// scale := (max_move / maxU)
-			for o = 0; o < sh.nobjs; o++ {
-
-				scale := 0.0
-				if sh.Magnitude(Ucur[o]) > 0.0 {
-					scale = (STEPS[o] / sh.Magnitude(Ucur[o]))
-				}
-
-				//scale := (max_move / sh.Magnitude(Ucur[o]))
-				for j = 0; j < sh.ndims; j++ {
-					Ucur[o][j] *= scale
-				}
-			}
+			// Scale the updates.
+			sh.ScaleUpdates(max_move, Ucur)
 			// Update the position of each object.
 			for o = 0; o < sh.nobjs; o++ {
 				for j = 0; j < sh.ndims; j++ {
@@ -133,20 +101,11 @@ func (sh *Shoehorn) Learn(max_move float64, mom float64, l2 float64, numepochs i
 			}
 			// Compute error.
 			Ecur = sh.Error(min_weight, alpha, l2) / float64(sh.nobjs)
-
-			E1 = sh.ErrorList(min_weight, alpha, l2)
-			for o = 0; o < sh.nobjs; o++ {
-				if E1[o] >= E0[o] {
-					STEPS[o] *= 0.5
-				}
-			}
-
 			// Perform actions depending on whether error was reduced or not.
 			if Ecur < Elst {
 				// Set updates and error for next epoch.
-				U = Ucur
+				Ulst = Ucur
 				Elst = Ecur
-				E0 = E1
 				// Break out of try loop.
 				break
 			} else {
@@ -161,9 +120,113 @@ func (sh *Shoehorn) Learn(max_move float64, mom float64, l2 float64, numepochs i
 		}
 		// Report status.
 		fmt.Printf("Epoch %6d (%d tries): E=%.10e G=%.10e (max_move=%.4e mom=%.4e alpha=%.4e l2=%.4e odist=%.4e; epoch took %v; %v elapsed).\n", epoch+1, tries+1, Ecur, G, max_move, mom, alpha, l2, sh.OriginDistance(), time.Now().Sub(t), time.Now().Sub(T))
-		// Log positions of objects.
-		sh.WriteLocations(fmt.Sprintf("tmp/positions_%v.csv", epoch))
+		// Write position of objects.
+		if output_prefix != "" {
+			sh.WriteLocations(fmt.Sprintf("%v_%v.csv", output_prefix, epoch))
+		}
 	}
+}
+
+func (sh *Shoehorn) LearnSingleUpdate(max_move float64, mom float64, l2 float64, numepochs int, alpha float64, output_prefix string) {
+	var (
+		epoch, o, j, tries        int
+		min_weight, Elst, Ecur, G float64
+		max_moves, gradient       []float64
+		Ulst, Ucur                [][]float64
+		T, t                      time.Time
+	)
+	// Initialization.
+	T = time.Now()
+	min_weight = 0.0
+	Ulst = sh.GetObjectStore()
+
+	max_moves = make([]float64, sh.nobjs)
+	for o = 0; o < sh.nobjs; o++ {
+		max_moves[o] = max_move
+	}
+
+	// Perform learning.
+	for Elst, epoch = math.MaxFloat64, 0; epoch < numepochs; epoch++ {
+		t = time.Now()
+		G = 0.0
+		Ucur = sh.GetObjectStore()
+		for o = 0; o < sh.nobjs; o++ {
+			// Compute gradient for object.
+			R := sh.Reconstructions(min_weight)
+			gradient = sh.Gradient(o, min_weight, alpha, l2, R)
+			G += sh.Magnitude(gradient) / float64(sh.nobjs)
+			// Set current update.
+			for j = 0; j < sh.ndims; j++ {
+				Ucur[o][j] = gradient[j] + (mom * Ulst[o][j])
+			}
+			// Scale the update.
+			scale := max_moves[o] / sh.Magnitude(Ucur[o])
+			for j = 0; j < sh.ndims; j++ {
+				Ucur[o][j] *= scale
+			}
+			// Update the position of the object.
+			for j = 0; j < sh.ndims; j++ {
+				sh.L[o][j] -= Ucur[o][j]
+			}
+			// Perform updates depending on whether decreased.
+			Ecur = sh.Error(min_weight, alpha, l2) / float64(sh.nobjs)
+			if Ecur < Elst {
+				Elst = Ecur
+				for j = 0; j < sh.ndims; j++ {
+					Ulst[o][j] = Ucur[o][j]
+				}
+			} else {
+				for j = 0; j < sh.ndims; j++ {
+					sh.L[o][j] += Ucur[o][j]
+					Ulst[o][j] = 0.0
+				}
+				max_moves[o] *= 0.5
+			}
+		}
+		// Report status.
+		fmt.Printf("Epoch %6d (%d tries): E=%.10e G=%.10e (max_move=%.4e mom=%.4e alpha=%.4e l2=%.4e odist=%.4e; epoch took %v; %v elapsed).\n", epoch+1, tries+1, Ecur, G, max_move, mom, alpha, l2, sh.OriginDistance(), time.Now().Sub(t), time.Now().Sub(T))
+		// Write position of objects.
+		if output_prefix != "" {
+			sh.WriteLocations(fmt.Sprintf("%v_%v.csv", output_prefix, epoch))
+		}
+	}
+}
+
+// Scales set set of updates relative to the maximum move parameter.
+func (sh *Shoehorn) ScaleUpdates(max_move float64, updates [][]float64) {
+	// // Find the smallest update.
+	// min_magnitude := math.MaxFloat64
+	// for o := 0; o < len(updates); o++ {
+	// 	magnitude := sh.Magnitude(updates[o])
+	// 	if magnitude < min_magnitude {
+	// 		min_magnitude = magnitude
+	// 	}
+	// }
+	// // Scale large updates to be within a scale factor of the smallest update.
+	// for o := 0; o < len(updates); o++ {
+	// 	magnitude := sh.Magnitude(updates[o])
+	// 	if magnitude > (5.0 * min_magnitude) {
+	// 		for j := 0; j < sh.ndims; j++ {
+	// 			updates[o][j] *= ((5.0 * min_magnitude) / magnitude)
+	// 		}
+	// 	}
+	// }
+	// Find the largest update.
+	max_magnitude := 0.0
+	for o := 0; o < len(updates); o++ {
+		magnitude := sh.Magnitude(updates[o])
+		if magnitude > max_magnitude {
+			max_magnitude = magnitude
+		}
+	}
+	// Rescale updates so that largest is max_move.
+	for o := 0; o < len(updates); o++ {
+		// magnitude := sh.Magnitude(updates[o])
+		for j := 0; j < sh.ndims; j++ {
+			updates[o][j] *= (max_move / max_magnitude)
+		}
+	}
+	return
 }
 
 //
@@ -223,9 +286,9 @@ func (sh *Shoehorn) Reconstruction(object int, min_weight float64) (WP map[int]f
 
 func (sh *Shoehorn) Error(min_weight float64, alpha float64, l2 float64) (E float64) {
 	var (
-		R ReconstructionSet
+		R       ReconstructionSet
 		o, j, f int
-		p, q float64
+		p, q    float64
 	)
 	// Get the object reconstructions.
 	R = sh.Reconstructions(min_weight)
@@ -233,7 +296,7 @@ func (sh *Shoehorn) Error(min_weight float64, alpha float64, l2 float64) (E floa
 	for o = 0; o < sh.nobjs; o++ {
 		// Reconstruction error.
 		for f, p = range sh.objects[o].data {
-			q = (alpha * p) + ((1.0-alpha) * (R.WPS[o][f]/R.WS[o]))
+			q = (alpha * p) + ((1.0 - alpha) * (R.WPS[o][f] / R.WS[o]))
 			E += (p * (math.Log(p) - math.Log(q)))
 		}
 		// L2 punishment error.
@@ -243,32 +306,6 @@ func (sh *Shoehorn) Error(min_weight float64, alpha float64, l2 float64) (E floa
 	}
 	return
 }
-
-func (sh *Shoehorn) ErrorList(min_weight float64, alpha float64, l2 float64) (E []float64) {
-	var (
-		R ReconstructionSet
-		o, j, f int
-		e, p, q float64
-	)
-	// Get the object reconstructions.
-	R = sh.Reconstructions(min_weight)
-	// Compute the error for each object.
-	for o = 0; o < sh.nobjs; o++ {
-		e = 0.0
-		// Reconstruction error.
-		for f, p = range sh.objects[o].data {
-			q = (alpha * p) + ((1.0-alpha) * (R.WPS[o][f]/R.WS[o]))
-			e += (p * (math.Log(p) - math.Log(q)))
-		}
-		// L2 punishment error.
-		for j = 0; j < sh.ndims; j++ {
-			e += 0.5 * l2 * sh.L[o][j] * sh.L[o][j]
-		}
-		E = append(E, e)
-	}
-	return
-}
-
 
 //
 // Gradient methods.
@@ -416,7 +453,7 @@ func (sh *Shoehorn) Neighbors(object int, min_weight float64) (N Neighbors) {
 			distance = math.Pow(distance, 0.5)
 			weight = math.Exp(-distance)
 			// If the point isn't 0 and the weight is above the minimum, add it as a neighbor.
-			if (weight >= min_weight) {
+			if weight >= min_weight {
 				N = append(N, Neighbor{object: o, distance: distance, weight: weight})
 			}
 		}

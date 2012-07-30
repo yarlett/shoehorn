@@ -16,11 +16,6 @@ func main() {
 	alpha := 0.001
 
 	// Perform first round of gradient descent.
-	max_move, momentum, l2, numepochs := 0.001, 0.5, 1.0, 200
-	sh.Learn(max_move, momentum, l2, numepochs, alpha)
-	sh.WriteLocations("mnist_locations1.csv")
-
-	// // Perform second round of gradient descent.
-	// sh.Learn(lr, momentum, numepochs, alpha)
-	// sh.WriteLocations("mnist_locations3.csv")
+	max_move, momentum, l2, numepochs := 0.1, 0.0, 0.0, 1000
+	sh.LearnSingleUpdate(max_move, momentum, l2, numepochs, alpha, "tmp/mnist_locations")
 }

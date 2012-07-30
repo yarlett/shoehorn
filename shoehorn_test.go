@@ -47,7 +47,7 @@ func TestReconstructions(t *testing.T) {
 	for o := 0; o < sh.nobjs; o++ {
 		sump, sumq := 0.0, 0.0
 		for f, p := range sh.objects[o].data {
-			q := (ALPHA * p) + ((1.0-ALPHA)*(R.WPS[o][f]/R.WS[o]))
+			q := (ALPHA * p) + ((1.0 - ALPHA) * (R.WPS[o][f] / R.WS[o]))
 			sump += p
 			sumq += q
 		}
@@ -71,7 +71,7 @@ func TestGradient(t *testing.T) {
 	// Compute and save gradient information for objects.
 	G = sh.Gradients(MIN_WEIGHT, ALPHA, L2)
 	// Iterate over the position of each object in each dimension.
-	for o = 0; o < len(sh.objects); o++ {
+	for o = 0; o < sh.nobjs; o++ {
 		for j = 0; j < sh.ndims; j++ {
 			// Calculate error at x - h.
 			sh.L[o][j] -= h
@@ -85,7 +85,7 @@ func TestGradient(t *testing.T) {
 			approx_grad = (Eh - Enh) / (2.0 * h)
 			// Compare actual and approximated gradients.
 			pcerr = math.Abs((G[o][j]-approx_grad)/G[o][j]) * 100.0
-			if pcerr > 0.01 {
+			if pcerr > 0.05 {
 				t.Errorf("Discrepancy in gradient for object %3d in dimension %3d: %3.6f%% Error: h=%e: Analytic=%2.10e; Approximated=%2.10e.\n", o, j, pcerr, h, G[o][j], approx_grad)
 			}
 		}
