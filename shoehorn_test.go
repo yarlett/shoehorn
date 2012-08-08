@@ -12,7 +12,7 @@ var (
 	NDIMS      int     = 2
 	MIN_WEIGHT float64 = 0.0
 	ALPHA      float64 = 0.01
-	L2         float64 = 0.10
+	L2         float64 = 1.0
 )
 
 // Returns a Shoehorn object initialized with some test data.
