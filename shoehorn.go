@@ -37,7 +37,7 @@ func (sh *Shoehorn) Store(object_name string, feature_name string, value float64
 		sh.objects = append(sh.objects, &FeatureVector{data: make(map[int]float64)})
 		loc := make([]float64, sh.ndims)
 		for i := 0; i < sh.ndims; i++ {
-			loc[i] = rand.NormFloat64() * 0.1
+			loc[i] = rand.Float64() * 0.01
 		}
 		sh.L = append(sh.L, loc)
 		sh.object_ixs[object_name] = len(sh.objects) - 1
@@ -59,77 +59,59 @@ func (sh *Shoehorn) Store(object_name string, feature_name string, value float64
 // Learn method. Performs gradient-descent on object locations.
 //
 
-func (sh *Shoehorn) Learn(max_move float64, mom float64, l2 float64, numepochs int, alpha float64, output_prefix string) {
+func (sh *Shoehorn) Learn(max_move float64, mom float64, numepochs int, alpha float64, rescale bool, output_prefix string) {
 	var (
-		epoch, o, j, tries, maxtries                 int
-		min_weight, Elst, Ecur, G, maxG, tmpG, scale float64
-		gradients, Ulst, Ucur                        [][]float64
-		T, t                                         time.Time
+		epoch, o, j             int
+		min_weight, E, G, scale, l2 float64
+		gradients, Ulst, Ucur   [][]float64
+		T, t                    time.Time
 	)
 	// Initialization.
 	T = time.Now()
 	min_weight = 0.0
-	maxtries = 10
 	Ulst = sh.GetObjectStore()
 	// Perform learning.
-	for Elst, epoch = math.MaxFloat64, 0; (epoch < numepochs) && (max_move > 1e-6); epoch++ {
+	for epoch = 0; epoch < numepochs; epoch++ {
 		t = time.Now()
+
+		if rescale {
+			l2 = ParameterSetter(epoch, 0, 1.0, numepochs, 0.0)
+		} else {
+			l2 = 0.0
+		}
+
 		// Get gradient for all objects.
 		gradients = sh.Gradients(min_weight, alpha, l2)
 		// Calculate magnitude of gradient vectors and maximum.
 		G = 0.0
-		maxG = 0.0
 		for o = 0; o < sh.nobjs; o++ {
-			tmpG = sh.Magnitude(gradients[o])
-			G += tmpG
-			if tmpG > maxG {
-				maxG = tmpG
-			}
+			G += sh.Magnitude(gradients[o])
 		}
 		G /= float64(sh.nobjs)
-		// Update positions of objects.
-		for tries = 0; tries < maxtries; tries++ {
-			// Set the current updates.
-			Ucur = sh.GetObjectStore()
-			for o = 0; o < sh.nobjs; o++ {
-				//scale = max_move / maxG
-				scale = max_move / sh.Magnitude(gradients[o])
-				for j = 0; j < sh.ndims; j++ {
-					Ucur[o][j] = (scale * gradients[o][j]) + (mom * Ulst[o][j])
-				}
+		// Set the current updates.
+		Ucur = sh.GetObjectStore()
+		for o = 0; o < sh.nobjs; o++ {
+			scale = max_move / sh.Magnitude(gradients[o])
+			for j = 0; j < sh.ndims; j++ {
+				Ucur[o][j] = (scale * gradients[o][j]) + (mom * Ulst[o][j])
 			}
-			// Update the position of each object.
-			for o = 0; o < sh.nobjs; o++ {
-				for j = 0; j < sh.ndims; j++ {
-					sh.L[o][j] -= Ucur[o][j]
-				}
-			}
-			// Compute error.
-			Ecur = sh.Error(min_weight, alpha, l2) / float64(sh.nobjs)
-
-			Ulst = Ucur
-			Elst = Ecur
-			break
-
-			// // Perform actions depending on whether error was reduced or not.
-			// if Ecur < Elst {
-			// 	// Set updates and error for next epoch.
-			// 	Ulst = Ucur
-			// 	Elst = Ecur
-			// 	// Break out of try loop.
-			// 	break
-			// } else {
-			// 	// Unwind the changes and reduce the maximum move.
-			// 	for o = 0; o < sh.nobjs; o++ {
-			// 		for j = 0; j < sh.ndims; j++ {
-			// 			sh.L[o][j] += Ucur[o][j]
-			// 		}
-			// 	}
-			// 	max_move *= 0.5
-			// }
 		}
+		// Update the position of each object.
+		for o = 0; o < sh.nobjs; o++ {
+			for j = 0; j < sh.ndims; j++ {
+				sh.L[o][j] -= Ucur[o][j]
+			}
+		}
+		// Rescale if required.
+		if rescale {
+			radius := ParameterSetter(epoch, 0, 0.1, numepochs, 3.0)
+			sh.Rescale(radius)
+			//max_move = radius / 15
+		}
+		// Compute error.
+		E = sh.Error(min_weight, alpha, l2) / float64(sh.nobjs)
 		// Report status.
-		fmt.Printf("Epoch %6d (%d tries): E=%.10e G=%.10e (max_move=%.4e mom=%.4e alpha=%.4e l2=%.4e odist=%.4e; epoch took %v; %v elapsed).\n", epoch+1, tries+1, Ecur, G, max_move, mom, alpha, l2, sh.OriginDistance(), time.Now().Sub(t), time.Now().Sub(T))
+		fmt.Printf("Epoch %6d: E=%.10e G=%.10e (max_move=%.4e mom=%.4e alpha=%.4e l2=%.4e odist=%.4e; epoch took %v; %v elapsed).\n", epoch+1, E, G, max_move, mom, alpha, l2, sh.OriginDistance(), time.Now().Sub(t), time.Now().Sub(T))
 		// Write position of objects.
 		if output_prefix != "" {
 			sh.WriteLocations(fmt.Sprintf("%v_%v.csv", output_prefix, epoch+1))
@@ -345,25 +327,14 @@ func (sh *Shoehorn) ObjectIDs() (object_ids []int) {
 	return
 }
 
-// Ensures that the feature values for all objects sum to 1.
-func (sh *Shoehorn) NormalizeObjectSums() {
-	for object := 0; object < sh.nobjs; object++ {
-		sum := sh.objects[object].Sum()
-		for k, v := range sh.objects[object].data {
-			sh.objects[object].Set(k, v/sum)
-		}
-	}
-	return
-}
-
-// Ensures that the feature values for all objects sum to 1.
-func (sh *Shoehorn) NormalizeObjectMagnitudes() {
+// Ensures that the feature values for all objects have the same magnitude.
+func (sh *Shoehorn) NormalizeObjects(metric float64) {
 	for object := 0; object < sh.nobjs; object++ {
 		mag := 0.0
 		for _, v := range sh.objects[object].data {
-			mag += math.Pow(v, 2.0)
+			mag += math.Pow(v, metric)
 		}
-		mag = math.Pow(mag, 0.5)
+		mag = math.Pow(mag, 1.0/metric)
 		for k, v := range sh.objects[object].data {
 			sh.objects[object].Set(k, v/mag)
 		}
@@ -396,6 +367,38 @@ func (sh *Shoehorn) Magnitude(V []float64) (mag float64) {
 		mag += V[i] * V[i]
 	}
 	mag = math.Pow(mag, 0.5)
+	return
+}
+
+func (sh *Shoehorn) FindDistanceRange() (min_distance, max_distance float64) {
+	min_distance, max_distance = math.MaxFloat64, 0.0
+	for o1 := 0; o1 < sh.nobjs; o1++ {
+		for o2 := 0; o2 < o1; o2++ {
+			distance := 0.0
+			for j := 0; j < sh.ndims; j++ {
+				distance += math.Pow(sh.L[o1][j]-sh.L[o2][j], 2.0)
+			}
+			distance = math.Pow(distance, 0.5)
+			if distance < min_distance {
+				min_distance = distance
+			}
+			if distance > max_distance {
+				max_distance = distance
+			}
+		}
+	}
+	return
+}
+
+// Rescale the points to fit within a given radius.
+func (sh *Shoehorn) Rescale(radius float64) {
+	_, max_distance := sh.FindDistanceRange()
+	for o := 0; o < sh.nobjs; o++ {
+		scale := 2.0 * radius / max_distance
+		for j := 0; j < sh.ndims; j++ {
+			sh.L[o][j] *= scale
+		}
+	}
 	return
 }
 
@@ -468,7 +471,6 @@ func NewShoehorn(filename string, ndims int, downsample float64) (sh *Shoehorn) 
 		line, isprefix, err = bfr.ReadLine()
 	}
 	// Normalize each vector so they sum to 1.
-	//sh.NormalizeObjectMagnitudes()
-	sh.NormalizeObjectSums()
+	sh.NormalizeObjects(1.0)
 	return
 }

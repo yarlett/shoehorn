@@ -14,9 +14,11 @@ func main() {
 	fmt.Printf("Took %v to create data set of %d objects.\n", time.Now().Sub(t1), len(sh.ObjectIDs()))
 
 	// Constant learning parameters.
-	alpha := 0.01
+	//alpha := 0.01
 
 	// Perform first round of gradient descent.
-	max_move, momentum, l2, numepochs := 0.1, 0.0, 0.05, 2500
-	sh.Learn(max_move, momentum, l2, numepochs, alpha, "tmp/locations")
+	//max_move, momentum, l2 := 0.005, 0.0, 0.0
+	momentum, alpha := 0.0, 0.01
+	sh.Learn(0.05, momentum, 1000, alpha, true, "tmp/locations")
+	//sh.Learn(0.1, momentum, 500, alpha, false, "tmp/locations")
 }
