@@ -34,14 +34,15 @@ def makeplot(locations_directory, filename, axis_limit=1.0):
 	lb.close(fig)
 
 if __name__ == "__main__":
-	# Extra locations directory.
-	locations_directory = os.path.abspath(sys.argv[1])	
+	# Find the most recently modified CSV file matching the prefix in sys.argv[1].
+	directory, prefix = os.path.split(sys.argv[1])
+	directory = os.path.abspath(directory)
 	# Get a list of all the files.
-	fnames = [fname for fname in os.listdir(locations_directory) if re.match(r"locations_(?P<num>\d+)\.csv", fname)]
+	fnames = [fname for fname in os.listdir(directory) if re.match("{:s}.+\.csv".format(prefix), fname)]
 	# Find axis limit.
 	axis_limit = None
 	for fname in fnames:
-		D = loaddata(os.path.join(locations_directory, fname))
+		D = loaddata(os.path.join(directory, fname))
 		for n in D:
 			dat = np.array(D[n], "d")
 			extremum = np.abs(dat).max()
@@ -51,8 +52,8 @@ if __name__ == "__main__":
 	print("Axis limit is {:e}.".format(axis_limit))
 	# Make the plots.
 	for fname in fnames:
-		makeplot(locations_directory, fname, axis_limit=axis_limit)
+		makeplot(directory, fname, axis_limit=axis_limit)
 	# Make the movie.
-	os.system("ffmpeg -y -i '{:s}' {:s}".format(os.path.join(locations_directory, "%06d.png"), os.path.join(locations_directory, "movie.m4v")))
+	os.system("ffmpeg -y -i '{:s}' {:s}".format(os.path.join(directory, "%06d.png"), os.path.join(directory, "movie.m4v")))
 	# Clean up the plots.
-	os.system("rm {:s}".format(os.path.join(locations_directory, "*.png")))
+	os.system("rm {:s}".format(os.path.join(directory, "*.png")))

@@ -18,7 +18,7 @@ func main() {
 
 	// Perform first round of gradient descent.
 	//max_move, momentum, l2 := 0.005, 0.0, 0.0
-	momentum, alpha, l2 := 0.0, 0.01, 2.0
+	momentum, alpha, l2 := 0.0, 0.01, 0.1
 	sh.Learn(0.01, momentum, 100000, alpha, l2, "tmp/locations")
 	//sh.Learn(0.1, momentum, 500, alpha, false, "tmp/locations")
 }
