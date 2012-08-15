@@ -37,7 +37,7 @@ func (sh *Shoehorn) Store(object_name string, feature_name string, value float64
 		sh.objects = append(sh.objects, &FeatureVector{data: make(map[int]float64)})
 		loc := make([]float64, sh.ndims)
 		for i := 0; i < sh.ndims; i++ {
-			loc[i] = rand.Float64() * 0.01
+			loc[i] = (rand.Float64() - 0.5) * 0.1
 		}
 		sh.L = append(sh.L, loc)
 		sh.object_ixs[object_name] = len(sh.objects) - 1
@@ -59,12 +59,12 @@ func (sh *Shoehorn) Store(object_name string, feature_name string, value float64
 // Learn method. Performs gradient-descent on object locations.
 //
 
-func (sh *Shoehorn) Learn(max_move float64, mom float64, numepochs int, alpha float64, rescale bool, output_prefix string) {
+func (sh *Shoehorn) Learn(max_move float64, mom float64, numepochs int, alpha float64, l2 float64, output_prefix string) {
 	var (
-		epoch, o, j             int
-		min_weight, E, G, scale, l2 float64
-		gradients, Ulst, Ucur   [][]float64
-		T, t                    time.Time
+		epoch, o, j           int
+		min_weight, G, scale  float64
+		gradients, Ulst, Ucur [][]float64
+		T, t                  time.Time
 	)
 	// Initialization.
 	T = time.Now()
@@ -73,15 +73,12 @@ func (sh *Shoehorn) Learn(max_move float64, mom float64, numepochs int, alpha fl
 	// Perform learning.
 	for epoch = 0; epoch < numepochs; epoch++ {
 		t = time.Now()
-
-		if rescale {
-			l2 = ParameterSetter(epoch, 0, 1.0, numepochs, 0.0)
-		} else {
-			l2 = 0.0
-		}
-
 		// Get gradient for all objects.
 		gradients = sh.Gradients(min_weight, alpha, l2)
+		// Get mean distance from origin.
+		mean_origin_distance := sh.MeanOriginDistance()
+		max_move = mean_origin_distance / 20
+
 		// Calculate magnitude of gradient vectors and maximum.
 		G = 0.0
 		for o = 0; o < sh.nobjs; o++ {
@@ -102,20 +99,26 @@ func (sh *Shoehorn) Learn(max_move float64, mom float64, numepochs int, alpha fl
 				sh.L[o][j] -= Ucur[o][j]
 			}
 		}
-		// Rescale if required.
-		if rescale {
-			radius := ParameterSetter(epoch, 0, 0.1, numepochs, 3.0)
-			sh.Rescale(radius)
-			//max_move = radius / 15
-		}
-		// Compute error.
-		E = sh.Error(min_weight, alpha, l2) / float64(sh.nobjs)
+
+		// // Rescale if required.
+		// if rescale {
+		// 	radius := ParameterSetter(epoch, 0, 0.1, numepochs, 2.0)
+		// 	sh.Rescale(radius)
+		// 	max_move = (2.0 * radius) / 20
+		// }
+
 		// Report status.
-		fmt.Printf("Epoch %6d: E=%.10e G=%.10e (max_move=%.4e mom=%.4e alpha=%.4e l2=%.4e odist=%.4e; epoch took %v; %v elapsed).\n", epoch+1, E, G, max_move, mom, alpha, l2, sh.OriginDistance(), time.Now().Sub(t), time.Now().Sub(T))
+		fmt.Printf("Epoch %6d: E=%.10e G=%.10e (max_move=%.4e mom=%.4e alpha=%.4e l2=%.4e odist=%.4e; epoch took %v; %v elapsed).\n", epoch+1, 0.0, G, max_move, mom, alpha, l2, sh.MeanOriginDistance(), time.Now().Sub(t), time.Now().Sub(T))
 		// Write position of objects.
 		if output_prefix != "" {
 			sh.WriteLocations(fmt.Sprintf("%v_%v.csv", output_prefix, epoch+1))
 		}
+
+		l2 *= 0.995
+		if l2 < 1e-6 {
+			break
+		}
+
 	}
 }
 
@@ -229,11 +232,11 @@ func (sh *Shoehorn) GradientWrapper(object int, min_weight float64, alpha float6
 
 func (sh *Shoehorn) Gradient(object int, min_weight float64, alpha float64, l2 float64, R ReconstructionSet) (gradient []float64) {
 	var (
-		o, j, feature                                               int
-		distance, weight, p, tmp1, tmp2, tmp3, distance_from_origin float64
-		T1, T2                                                      []float64
-		N                                                           Neighbors
-		n                                                           Neighbor
+		o, j, feature                         int
+		distance, weight, p, tmp1, tmp2, tmp3 float64
+		T1, T2                                []float64
+		N                                     Neighbors
+		n                                     Neighbor
 	)
 	gradient = make([]float64, sh.ndims)
 	T1 = make([]float64, sh.ndims)
@@ -282,10 +285,13 @@ func (sh *Shoehorn) Gradient(object int, min_weight float64, alpha float64, l2 f
 		}
 	}
 	// Add distance from origin punishment gradient information.
-	distance_from_origin = sh.Magnitude(sh.L[object])
 	for j = 0; j < sh.ndims; j++ {
-		gradient[j] += (l2 * sh.L[object][j] / distance_from_origin)
+		gradient[j] += (2.0 * l2 * sh.L[object][j])
 	}
+	// distance_from_origin = sh.Magnitude(sh.L[object])
+	// for j = 0; j < sh.ndims; j++ {
+	// 	gradient[j] += (l2 * sh.L[object][j] / distance_from_origin)
+	// }
 	return
 }
 
@@ -343,7 +349,7 @@ func (sh *Shoehorn) NormalizeObjects(metric float64) {
 }
 
 // Returns the average distance of objects from the origin.
-func (sh *Shoehorn) OriginDistance() (dist float64) {
+func (sh *Shoehorn) MeanOriginDistance() (dist float64) {
 	var n float64
 	for o := 0; o < sh.nobjs; o++ {
 		dist += sh.Magnitude(sh.L[o])
@@ -392,11 +398,33 @@ func (sh *Shoehorn) FindDistanceRange() (min_distance, max_distance float64) {
 
 // Rescale the points to fit within a given radius.
 func (sh *Shoehorn) Rescale(radius float64) {
-	_, max_distance := sh.FindDistanceRange()
+	// Compute centroid of locations.
+	centroid := make([]float64, sh.ndims)
 	for o := 0; o < sh.nobjs; o++ {
-		scale := 2.0 * radius / max_distance
 		for j := 0; j < sh.ndims; j++ {
-			sh.L[o][j] *= scale
+			centroid[j] += sh.L[o][j]
+		}
+	}
+	for j := 0; j < sh.ndims; j++ {
+		centroid[j] /= float64(sh.nobjs)
+	}
+	// Compute maximum distance from centroid.
+	max_distance := 0.0
+	for o := 0; o < sh.nobjs; o++ {
+		distance := 0.0
+		for j := 0; j < sh.ndims; j++ {
+			distance += math.Pow(sh.L[o][j]-centroid[j], 2.0)
+		}
+		distance = math.Pow(distance, 0.5)
+		if distance > max_distance {
+			max_distance = distance
+		}
+	}
+	// Center and scale object locations to fit within specified radius.
+	scale := radius / max_distance
+	for o := 0; o < sh.nobjs; o++ {
+		for j := 0; j < sh.ndims; j++ {
+			sh.L[o][j] = (sh.L[o][j] - centroid[j]) * scale
 		}
 	}
 	return
