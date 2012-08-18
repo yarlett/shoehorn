@@ -59,77 +59,86 @@ func (sh *Shoehorn) Store(object_name string, feature_name string, value float64
 // Learn method. Performs gradient-descent on object locations.
 //
 
-func (sh *Shoehorn) Learn(max_move float64, mom float64, numepochs int, alpha float64, l2_mode bool, l2_start float64, l2_end float64, output_prefix string) {
+func (sh *Shoehorn) LearnRadius(radius1 float64, radius2 float64, numepochs int, alpha float64, output_prefix string) {
 	var (
-		epoch, o, j                                                                        int
-		min_weight, tmpG, G, maxG, scale, mean_origin_distance, use_max_move, l2, l2_decay float64
-		gradients                                                                          [][]float64
-		T, t                                                                               time.Time
+		epoch, o, j                                     int
+		max_move, min_weight, scale, radius, radius_mul float64
+		gradients                                       [][]float64
+		T, t                                            time.Time
 	)
 	// Initialization.
 	T = time.Now()
 	min_weight = 0.0
-	l2 = l2_start
-	l2_decay = math.Pow((l2_end / l2_start), 1.0/float64(numepochs))
-
-	// Perform initial scaling so impact of L2 punishment isn't overwhelming.
-	_, e1, e2 := sh.Error(min_weight, alpha, l2)
-	fmt.Printf("%v %v\n", e1, e2)
-	for ; e2 > (e1/10.0); {
-		for o = 0; o < sh.nobjs; o++ {
-			for j = 0; j < sh.ndims; j++ {
-				sh.L[o][j] *= 0.5
-			}
-		}
-		_, e1, e2 = sh.Error(min_weight, alpha, l2)
-		fmt.Printf("%v %v\n", e1, e2)
-	}
-
+	radius = radius1
+	max_move = radius / 15.0
+	sh.Rescale(radius)
+	radius_mul = math.Pow(radius2/radius1, 1.0/float64(numepochs))
 	// Perform learning.
 	for epoch = 0; epoch < numepochs; epoch++ {
 		t = time.Now()
 		// Get gradient for all objects.
-		gradients = sh.Gradients(min_weight, alpha, l2)
-		// Calculate mean magnitude of gradient vectors.
-		G, maxG = 0.0, 0.0
-		for o = 0; o < sh.nobjs; o++ {
-			tmpG = sh.Magnitude(gradients[o])
-			G += tmpG
-			if tmpG > maxG {
-				maxG = tmpG
-			}
-		}
-		G /= float64(sh.nobjs)
-		// Set maximum move.
-		_, mean_origin_distance, _ = sh.DistanceInformation()
-		if l2_mode {
-			use_max_move = mean_origin_distance / 2.0
-			if use_max_move > 0.1 {
-				use_max_move = 0.1
-			}
-		} else {
-			use_max_move = max_move
-		}
+		gradients = sh.Gradients(min_weight, alpha)
 		// Set the current updates and apply them.
 		for o = 0; o < sh.nobjs; o++ {
-			// scale = use_max_move / sh.Magnitude(gradients[o])
-			scale = use_max_move / maxG
+			scale = max_move / sh.Magnitude(gradients[o])
 			for j = 0; j < sh.ndims; j++ {
 				sh.L[o][j] -= (scale * gradients[o][j])
 			}
 		}
 		// Report status.
-		fmt.Printf("Epoch %6d: G=%.10e (use_max_move=%.4e mom=%.4e alpha=%.4e l2=%.4e odist=%.4e; epoch took %v; %v elapsed).\n", epoch+1, G, use_max_move, mom, alpha, l2, mean_origin_distance, time.Now().Sub(t), time.Now().Sub(T))
+		fmt.Printf("Radius Epoch %6d: radius=%.4e max_move=%.4e alpha=%.4e; epoch took %v; %v elapsed).\n", epoch+1, radius, max_move, alpha, time.Now().Sub(t), time.Now().Sub(T))
 		// Write position of objects.
 		if output_prefix != "" {
 			sh.WriteLocations(fmt.Sprintf("%v_%v.csv", output_prefix, epoch+1))
 		}
-		// Reduce the l2 punishment parameter.
-		if l2_mode {
-			l2 *= l2_decay
-			if l2 < l2_end {
-				break
-			}
+		// Rescale the object locations and update the radius.
+		radius *= radius_mul
+		max_move *= radius_mul
+		sh.Rescale(radius)
+	}
+}
+
+func (sh *Shoehorn) LearnRprop(step_size float64, numepochs int, alpha float64, output_prefix string) {
+	var (
+		epoch, o, j          int
+		min_weight, mgG, mgS float64
+		G0, G1, S            [][]float64
+		T, t                 time.Time
+	)
+	// Initialization.
+	T = time.Now()
+	min_weight = 0.0
+	// Initialize Rprop parameters.
+	G0 = sh.GetObjectStore()
+	S = sh.GetObjectStore()
+	for o = 0; o < sh.nobjs; o++ {
+		for j = 0; j < sh.ndims; j++ {
+			S[o][j] = step_size
+		}
+	}
+	// Perform learning.
+	for epoch = 0; epoch < numepochs; epoch++ {
+		t = time.Now()
+		// Get gradient for all objects.
+		G1 = sh.Gradients(min_weight, alpha)
+		// Update positions using Rprop algorithm.
+		S = sh.Rprop(S, G0, G1)
+		// Retain copy of current gradient information for next epoch.
+		G0 = G1
+		// Compute magnitude of gradient and step sizes.
+		mgG = 0.0
+		mgS = 0.0
+		for o = 0; o < sh.nobjs; o++ {
+			mgG += sh.Magnitude(G1[o])
+			mgS += sh.Magnitude(S[o])
+		}
+		mgG /= float64(sh.nobjs)
+		mgS /= float64(sh.nobjs)
+		// Report status.
+		fmt.Printf("Rprop Epoch %6d: |G|=%.10e |S|=%.10e (alpha=%.4e; epoch took %v; %v elapsed).\n", epoch+1, mgG, mgS, alpha, time.Now().Sub(t), time.Now().Sub(T))
+		// Write position of objects.
+		if output_prefix != "" {
+			sh.WriteLocations(fmt.Sprintf("%v_%v.csv", output_prefix, epoch+1))
 		}
 	}
 }
@@ -189,11 +198,11 @@ func (sh *Shoehorn) Reconstruction(object int, min_weight float64) (WP map[int]f
 // Error methods.
 //
 
-func (sh *Shoehorn) Error(min_weight float64, alpha float64, l2 float64) (E, E1, E2 float64) {
+func (sh *Shoehorn) Error(min_weight float64, alpha float64) (E float64) {
 	var (
-		R       ReconstructionSet
-		o, j, f int
-		p, q    float64
+		R    ReconstructionSet
+		o, f int
+		p, q float64
 	)
 	// Get the object reconstructions.
 	R = sh.Reconstructions(min_weight)
@@ -202,14 +211,9 @@ func (sh *Shoehorn) Error(min_weight float64, alpha float64, l2 float64) (E, E1,
 		// Reconstruction error.
 		for f, p = range sh.objects[o].data {
 			q = (alpha * p) + ((1.0 - alpha) * (R.WPS[o][f] / R.WS[o]))
-			E1 += (p * (math.Log(p) - math.Log(q)))
-		}
-		// Distance from origin punishment error.
-		for j = 0; j < sh.ndims; j++ {
-			E2 += l2 * math.Pow(sh.L[o][j], 2.0)
+			E += (p * (math.Log(p) - math.Log(q)))
 		}
 	}
-	E = E1 + E2
 	return
 }
 
@@ -217,35 +221,35 @@ func (sh *Shoehorn) Error(min_weight float64, alpha float64, l2 float64) (E, E1,
 // Gradient methods.
 //
 
-func (sh *Shoehorn) Gradients(min_weight float64, alpha float64, l2 float64) (gradients [][]float64) {
+func (sh *Shoehorn) Gradients(min_weight float64, alpha float64) (G [][]float64) {
 	var (
 		o                int
 		R                ReconstructionSet
 		gi               GradientInfo
 		gradient_channel chan GradientInfo
 	)
-	gradients = make([][]float64, len(sh.objects))
+	G = make([][]float64, sh.nobjs)
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	// Precompute reconstruction data.
 	R = sh.Reconstructions(min_weight)
 	// Compute gradient information.
 	gradient_channel = make(chan GradientInfo, len(sh.objects))
 	for o = 0; o < sh.nobjs; o++ {
-		go sh.GradientWrapper(o, min_weight, alpha, l2, R, gradient_channel)
+		go sh.GradientWrapper(o, min_weight, alpha, R, gradient_channel)
 	}
 	for o = 0; o < sh.nobjs; o++ {
 		gi = <-gradient_channel
-		gradients[gi.object] = gi.gradient
+		G[gi.object] = gi.gradient
 	}
 	return
 }
 
-func (sh *Shoehorn) GradientWrapper(object int, min_weight float64, alpha float64, l2 float64, R ReconstructionSet, channel chan GradientInfo) {
-	channel <- GradientInfo{object: object, gradient: sh.Gradient(object, min_weight, alpha, l2, R)}
+func (sh *Shoehorn) GradientWrapper(object int, min_weight float64, alpha float64, R ReconstructionSet, channel chan GradientInfo) {
+	channel <- GradientInfo{object: object, gradient: sh.Gradient(object, min_weight, alpha, R)}
 	return
 }
 
-func (sh *Shoehorn) Gradient(object int, min_weight float64, alpha float64, l2 float64, R ReconstructionSet) (gradient []float64) {
+func (sh *Shoehorn) Gradient(object int, min_weight float64, alpha float64, R ReconstructionSet) (gradient []float64) {
 	var (
 		o, j, feature                         int
 		distance, weight, p, tmp1, tmp2, tmp3 float64
@@ -299,17 +303,35 @@ func (sh *Shoehorn) Gradient(object int, min_weight float64, alpha float64, l2 f
 			}
 		}
 	}
-	// Add distance from origin punishment gradient information.
-	// for j = 0; j < sh.ndims; j++ {
-	// 	gradient[j] += 2.0 * l2 * sh.L[object][j]
-	// }
-
-	foo := math.Pow(math.Pow(sh.Magnitude(sh.L[object]), 0.5), -0.5)
-	for j = 0; j < sh.ndims; j++ {
-		gradient[j] += l2 * sh.L[object][j] * foo
-	}
-
 	return
+}
+
+func (sh *Shoehorn) Rprop(S, G0, G1 [][]float64) [][]float64 {
+	var (
+		o, j             int
+		gradient_product float64
+	)
+	for o = 0; o < sh.nobjs; o++ {
+		for j = 0; j < sh.ndims; j++ {
+			// Update the step size (consistent gradient directions get a boost, inconsistent directions get reduced).
+			gradient_product = G0[o][j] * G1[o][j]
+			if gradient_product > 0.0 {
+				S[o][j] *= 1.1
+				if S[o][j] > 0.1 {
+					S[o][j] = 0.1
+				}
+			} else if gradient_product < 0.0 {
+				S[o][j] *= 0.5
+			}
+			// Update the position based on the sign of its magnitude and the learned step size (RProp doesn't use gradient magnitudes).
+			if G1[o][j] > 0.0 {
+				sh.L[o][j] -= S[o][j]
+			} else {
+				sh.L[o][j] += S[o][j]
+			}
+		}
+	}
+	return S
 }
 
 //
@@ -396,6 +418,34 @@ func (sh *Shoehorn) Magnitude(V []float64) (mag float64) {
 		mag += V[i] * V[i]
 	}
 	mag = math.Pow(mag, 0.5)
+	return
+}
+
+func (sh *Shoehorn) Rescale(radius float64) {
+	var (
+		o, j int
+	)
+	// Calculate centroid and maximum distance from origin.
+	centroid := make([]float64, sh.ndims)
+	max_distance := 0.0
+	for o = 0; o < sh.nobjs; o++ {
+		for j = 0; j < sh.ndims; j++ {
+			centroid[j] += sh.L[o][j]
+		}
+		distance := sh.Magnitude(sh.L[o])
+		if distance > max_distance {
+			max_distance = distance
+		}
+	}
+	for j = 0; j < sh.ndims; j++ {
+		centroid[j] /= float64(sh.nobjs)
+	}
+	// Recenter and rescale each location.
+	for o = 0; o < sh.nobjs; o++ {
+		for j = 0; j < sh.ndims; j++ {
+			sh.L[o][j] = (sh.L[o][j] - centroid[j]) * (radius / max_distance)
+		}
+	}
 	return
 }
 
