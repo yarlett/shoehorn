@@ -17,11 +17,11 @@ def loaddata(filename):
 	f.close()
 	return D
 
-def makeplot(locations_directory, filename, axis_limit=None):
+def makeplot(locations_directory, filename, prefix, axis_limit=None):
 	# Extract frame number.
-	m = re.match("locations_(?P<num>\d+).csv", filename)
+	m = re.match("{:s}.*?(?P<num>\d+).csv".format(prefix), filename)
 	frame = int(m.groups(0)[0])
-	# load the data.
+	# Load the data.
 	data = loaddata(os.path.join(locations_directory, filename))
 	# Plot the data.
 	fig = lb.figure()
@@ -54,7 +54,9 @@ if __name__ == "__main__":
 	axis_limit = None
 	# Make the plots.
 	for fname in fnames:
-		makeplot(directory, fname, axis_limit=axis_limit)
+		makeplot(directory, fname, prefix, axis_limit=axis_limit)
+	# Calculate frames per second to make movie last 1 minute.
+	fps = 60.0 / float(len(fnames))
 	# Make the movie.
 	os.system("ffmpeg -y -i '{:s}' {:s}".format(os.path.join(directory, "%06d.png"), os.path.join(directory, "movie.m4v")))
 	# Clean up the plots.
