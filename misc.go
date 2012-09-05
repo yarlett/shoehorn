@@ -23,7 +23,14 @@ func (N Neighbors) Less(i, j int) bool { return N[i].weight > N[j].weight }
 type GradientInfo struct {
 	object   int
 	gradient []float64
+	error    float64
 }
+
+type GradientInfos []GradientInfo
+
+func (GIS GradientInfos) Len() int           { return len(GIS) }
+func (GIS GradientInfos) Swap(i, j int)      { GIS[i], GIS[j] = GIS[j], GIS[i] }
+func (GIS GradientInfos) Less(i, j int) bool { return GIS[i].object < GIS[j].object }
 
 //
 // Reconstruction structures.

@@ -13,14 +13,9 @@ func main() {
 	fmt.Printf("Took %v to create data set of %d objects.\n", time.Now().Sub(t1), len(sh.ObjectIDs()))
 
 	// Define parameters.
-	alpha := 0.01
+	step_size, l2, alpha, numepochs := 0.1, 0.0, 0.0, 1000
+	//step_size, l2, alpha, numepochs := 0.1, 0.0005, 0.0, 1000
 
 	// Perform gradient-descent with L2 punishment initially.
-	sh.Learn(0.001, 1.0, alpha, 1000, "tmp/locations")
-
-	// Perform radius-limited gradient descent initially.
-	//sh.LearnRadius(0.5, 3.0, 1000, 0.01, "tmp/locations_radius")
-
-	// // Perform Rprop learning to refine object locations.
-	// sh.LearnRprop(0.01, 2000, 0.01, "tmp/locations_rprop")
+	sh.Learn(step_size, l2, alpha, numepochs, "tmp/locations")
 }
