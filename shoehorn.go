@@ -9,7 +9,6 @@ import (
 	"math/rand"
 	"os"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -114,6 +113,49 @@ func (sh *Shoehorn) Learn(step_size float64, l2 float64, alpha float64, numepoch
 	}
 }
 
+func (sh *Shoehorn) Learn2(step_size float64, l2 float64, alpha float64, numepochs int, output_prefix string) {
+	var (
+		epoch, o                 int
+		min_weight, mE0, mE1, mD float64
+		G                        []GradientInfo
+		T, t                     time.Time
+	)
+	// Initialization.
+	T = time.Now()
+	min_weight = 0.0
+	// Perform learning.
+	for epoch = 0; epoch < numepochs; epoch++ {
+		t = time.Now()
+		// Get gradient for all objects.
+		G = sh.Gradients(min_weight, alpha, l2)
+		// Update positions using gradient descent.
+		sh.GradientDescent(step_size, G)
+		// Calculate current error.
+		mE1 = 0.0
+		for o = 0; o < len(G); o++ {
+			mE1 += G[o].error
+		}
+		mE1 /= float64(sh.nobjs)
+		// Reduce step size if error didn't decrease.
+		if epoch > 0 && mE1 > mE0 {
+			step_size *= 0.75
+		}
+		mE0 = mE1
+		// Calculate average distance from origin.
+		mD = 0.0
+		for o = 0; o < sh.nobjs; o++ {
+			mD += sh.Magnitude(sh.L[o])
+		}
+		mD /= float64(sh.nobjs)
+		// Report status.
+		fmt.Printf("Epoch %6d: E=%.8e S=%.8e D=%.8e (alpha=%.4e; epoch took %v; %v elapsed).\n", epoch+1, mE1, step_size, mD, alpha, time.Now().Sub(t), time.Now().Sub(T))
+		// Write position of objects.
+		if output_prefix != "" {
+			sh.WriteLocations(fmt.Sprintf("%v_%v.csv", output_prefix, epoch+1))
+		}
+	}
+}
+
 //
 // Reconstruction methods.
 //
@@ -173,6 +215,7 @@ func (sh *Shoehorn) Gradients(min_weight float64, alpha float64, l2 float64) (G 
 	var (
 		o                int
 		R                ReconstructionSet
+		g                GradientInfo
 		gradient_channel chan GradientInfo
 	)
 	runtime.GOMAXPROCS(runtime.NumCPU())
@@ -184,10 +227,11 @@ func (sh *Shoehorn) Gradients(min_weight float64, alpha float64, l2 float64) (G 
 		go sh.GradientWrapper(o, min_weight, alpha, l2, R, gradient_channel)
 	}
 	// Sort gradient information by increasing object ID.
+	G = make([]GradientInfo, sh.nobjs)
 	for o = 0; o < sh.nobjs; o++ {
-		G = append(G, <-gradient_channel)
+		g = <-gradient_channel
+		G[g.object] = g
 	}
-	sort.Sort(GradientInfos(G))
 	return
 }
 
@@ -233,7 +277,7 @@ func (sh *Shoehorn) Gradient(object int, min_weight float64, alpha float64, l2 f
 		}
 		// Update error.
 		//error += p * math.Log(p/q)
-		error += math.Pow(p - q, 2.0)
+		error += math.Pow(p-q, 2.0)
 	}
 	// Compute impact of object position on reconstruction error of other objects.
 	for o = 0; o < sh.nobjs; o++ {
@@ -268,15 +312,15 @@ func (sh *Shoehorn) Gradient(object int, min_weight float64, alpha float64, l2 f
 
 // Gradient descent methods.
 
-func (sh *Shoehorn) GradientDescent(step_size float64, G [][]float64) {
+func (sh *Shoehorn) GradientDescent(step_size float64, G []GradientInfo) {
 	var (
 		o, j  int
 		scale float64
 	)
-	for o = 0; o < sh.nobjs; o++ {
-		scale = step_size / sh.Magnitude(G[o])
+	for o = 0; o < len(G); o++ {
+		scale = step_size / sh.Magnitude(G[o].gradient)
 		for j = 0; j < sh.ndims; j++ {
-			sh.L[o][j] -= scale * G[o][j]
+			sh.L[G[o].object][j] -= scale * G[o].gradient[j]
 		}
 	}
 	return
@@ -354,14 +398,18 @@ func (sh *Shoehorn) ObjectIDs() (object_ids []int) {
 
 // Ensures that the feature values for all objects have the same magnitude.
 func (sh *Shoehorn) NormalizeObjects(metric float64) {
-	for object := 0; object < sh.nobjs; object++ {
-		mag := 0.0
-		for _, v := range sh.objects[object].data {
+	var (
+		o, k   int
+		v, mag float64
+	)
+	for o = 0; o < sh.nobjs; o++ {
+		mag = 0.0
+		for _, v = range sh.objects[o].data {
 			mag += math.Pow(v, metric)
 		}
 		mag = math.Pow(mag, 1.0/metric)
-		for k, v := range sh.objects[object].data {
-			sh.objects[object].Set(k, v/mag)
+		for k, v = range sh.objects[o].data {
+			sh.objects[o].Set(k, v/mag)
 		}
 	}
 	return
@@ -500,6 +548,6 @@ func NewShoehorn(filename string, ndims int, downsample float64) (sh *Shoehorn) 
 		line, isprefix, err = bfr.ReadLine()
 	}
 	// Normalize each vector so they sum to 1.
-	sh.NormalizeObjects(1.0)
+	sh.NormalizeObjects(2.0)
 	return
 }
