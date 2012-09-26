@@ -15,105 +15,74 @@ import (
 )
 
 type Shoehorn struct {
-	ndims       int
-	nobjs       int
-	ftctr       int
-	object_ixs  map[string]int
-	feature_ixs map[string]int
-	objects     []*FeatureVector
-	L           [][]float64
-	lr, mom     float64
+	nd   int
+	no   int
+	nf   int
+	oixs map[string]int
+	fixs map[string]int
+	O    [][]float64
+	L    [][]float64
 }
 
 //
-// Object loading methods.
+// Shoehorn creation method.
 //
 
-func (sh *Shoehorn) Store(object_name string, feature_name string, value float64) {
-	// Update object indices.
-	_, obfound := sh.object_ixs[object_name]
-	if !obfound {
-		// Create new feature vector and location for the object if it hasn't been encountered before.
-		sh.objects = append(sh.objects, &FeatureVector{data: make(map[int]float64)})
-		loc := make([]float64, sh.ndims)
-		for i := 0; i < sh.ndims; i++ {
-			loc[i] = (rand.Float64() - 0.5) * 1e-2
+func (sh *Shoehorn) Create(S [][]string, ndims int) {
+	// Initializations.
+	sh.oixs = make(map[string]int, 0)
+	sh.fixs = make(map[string]int, 0)
+	// Construct object and feature indices.
+	octr := 0
+	fctr := 0
+	for _, strings := range S {
+		// Update object index.
+		_, obfound := sh.oixs[strings[0]]
+		if !obfound {
+			sh.oixs[strings[0]] = octr
+			octr++
 		}
-		sh.L = append(sh.L, loc)
-		sh.object_ixs[object_name] = len(sh.objects) - 1
-		sh.nobjs += 1
+		// Update feature index.
+		_, ftfound := sh.fixs[strings[1]]
+		if !ftfound {
+			sh.fixs[strings[1]] = fctr
+			fctr++
+		}
 	}
-	// Update feature indices.
-	_, ftfound := sh.feature_ixs[feature_name]
-	if !ftfound {
-		sh.feature_ixs[feature_name] = sh.ftctr
-		sh.ftctr++
+	// Set numbers of things.
+	sh.nd = ndims
+	sh.no = len(sh.oixs)
+	sh.nf = len(sh.fixs)
+	// Create objects.
+	sh.O = make([][]float64, sh.no)
+	for o := 0; o < sh.no; o++ {
+		sh.O[o] = make([]float64, sh.nf)
 	}
-	// Store the feature value for the object.
-	object, _ := sh.object_ixs[object_name]
-	feature, _ := sh.feature_ixs[feature_name]
-	sh.objects[object].Set(feature, value)
+	// Populate object values.
+	for _, strings := range S {
+		o := sh.oixs[strings[0]]
+		f := sh.fixs[strings[1]]
+		value, _ := strconv.ParseFloat(strings[2], 64)
+		sh.O[o][f] = value
+	}
+	// Set locations.
+	sh.L = make([][]float64, sh.no)
+	for o := 0; o < sh.no; o++ {
+		sh.L[o] = make([]float64, sh.nd)
+		for j := 0; j < sh.nd; j++ {
+			sh.L[o][j] = (rand.Float64() - 0.5) * 1e-2
+		}
+	}
 }
 
 //
 // Learn methods. Performs gradient-descent on object locations.
 //
 
-func (sh *Shoehorn) Learn(step_size float64, l2 float64, alpha float64, numepochs int, output_prefix string) {
-	var (
-		epoch, o, j            int
-		min_weight, mE, mS, mD float64
-		S                      [][]float64
-		G0, G1                 []GradientInfo
-		T, t                   time.Time
-	)
-	// Initialization.
-	T = time.Now()
-	min_weight = 0.0
-	S = sh.GetObjectStore()
-	for o = 0; o < sh.nobjs; o++ {
-		for j = 0; j < sh.ndims; j++ {
-			S[o][j] = step_size
-		}
-	}
-	// Perform learning.
-	for epoch = 0; epoch < numepochs; epoch++ {
-		t = time.Now()
-		// Get gradient for all objects.
-		G1 = sh.Gradients(min_weight, alpha, l2)
-		// Update positions using Rprop algorithm.
-		S = sh.Rprop(S, G0, G1, step_size/1000., step_size*1000.)
-		G0 = G1
-		// Calculate current error.
-		mE = 0.0
-		for o = 0; o < len(G1); o++ {
-			mE += G1[o].error
-		}
-		mE /= float64(sh.nobjs)
-		// Calculate current average step size.
-		mS = 0.0
-		for o = 0; o < len(S); o++ {
-			for j = 0; j < len(S[o]); j++ {
-				mS += S[o][j]
-			}
-		}
-		mS /= float64(sh.nobjs * sh.ndims)
-		// Calculate average distance from origin.
-		mD = 0.0
-		for o = 0; o < sh.nobjs; o++ {
-			mD += sh.Magnitude(sh.L[o])
-		}
-		mD /= float64(sh.nobjs)
-		// Report status.
-		fmt.Printf("Epoch %6d: E=%.8e S=%.8e D=%.8e (alpha=%.4e; epoch took %v; %v elapsed).\n", epoch+1, mE, mS, mD, alpha, time.Now().Sub(t), time.Now().Sub(T))
-		// Write position of objects.
-		if output_prefix != "" {
-			sh.WriteLocations(fmt.Sprintf("%v_%v.csv", output_prefix, epoch+1))
-		}
-	}
-}
-
-func (sh *Shoehorn) Learn2(step_size float64, l2 float64, alpha float64, numepochs int, output_prefix string) {
+func (sh *Shoehorn) LearnGradientDescent(step_size float64, l2 float64, alpha float64, numepochs int, output_prefix string) {
+	/*
+	Uses gradient descent to find the best location for objects.
+	*/
 	var (
 		epoch, o                 int
 		min_weight, mE0, mE1, mD float64
@@ -135,7 +104,7 @@ func (sh *Shoehorn) Learn2(step_size float64, l2 float64, alpha float64, numepoc
 		for o = 0; o < len(G); o++ {
 			mE1 += G[o].error
 		}
-		mE1 /= float64(sh.nobjs)
+		mE1 /= float64(sh.no)
 		// Reduce step size if error didn't decrease.
 		if epoch > 0 && mE1 > mE0 {
 			step_size *= 0.75
@@ -143,10 +112,10 @@ func (sh *Shoehorn) Learn2(step_size float64, l2 float64, alpha float64, numepoc
 		mE0 = mE1
 		// Calculate average distance from origin.
 		mD = 0.0
-		for o = 0; o < sh.nobjs; o++ {
-			mD += sh.Magnitude(sh.L[o])
+		for o = 0; o < sh.no; o++ {
+			mD += VectorMagnitude(sh.L[o])
 		}
-		mD /= float64(sh.nobjs)
+		mD /= float64(sh.no)
 		// Report status.
 		fmt.Printf("Epoch %6d: E=%.8e S=%.8e D=%.8e (alpha=%.4e; epoch took %v; %v elapsed).\n", epoch+1, mE1, step_size, mD, alpha, time.Now().Sub(t), time.Now().Sub(T))
 		// Write position of objects.
@@ -156,52 +125,165 @@ func (sh *Shoehorn) Learn2(step_size float64, l2 float64, alpha float64, numepoc
 	}
 }
 
+// func (sh *Shoehorn) Learn(step_size float64, l2 float64, alpha float64, numepochs int, output_prefix string) {
+// 	/*
+// 	Uses the Rprop algorithm to find the best location for objects.
+// 	*/
+// 	var (
+// 		epoch, o, j            int
+// 		min_weight, mE, mS, mD float64
+// 		S                      [][]float64
+// 		G0, G1                 []GradientInfo
+// 		T, t                   time.Time
+// 	)
+// 	// Initialization.
+// 	T = time.Now()
+// 	min_weight = 0.0
+// 	S = sh.GetObjectStore()
+// 	for o = 0; o < sh.nobjs; o++ {
+// 		for j = 0; j < sh.ndims; j++ {
+// 			S[o][j] = step_size
+// 		}
+// 	}
+// 	// Perform learning.
+// 	for epoch = 0; epoch < numepochs; epoch++ {
+// 		t = time.Now()
+// 		// Get gradient for all objects.
+// 		G1 = sh.Gradients(min_weight, alpha, l2)
+// 		// Update positions using Rprop algorithm.
+// 		S = sh.Rprop(S, G0, G1, step_size/1000., step_size*1000.)
+// 		G0 = G1
+// 		// Calculate current error.
+// 		mE = 0.0
+// 		for o = 0; o < len(G1); o++ {
+// 			mE += G1[o].error
+// 		}
+// 		mE /= float64(sh.nobjs)
+// 		// Calculate current average step size.
+// 		mS = 0.0
+// 		for o = 0; o < len(S); o++ {
+// 			for j = 0; j < len(S[o]); j++ {
+// 				mS += S[o][j]
+// 			}
+// 		}
+// 		mS /= float64(sh.nobjs * sh.ndims)
+// 		// Calculate average distance from origin.
+// 		mD = 0.0
+// 		for o = 0; o < sh.nobjs; o++ {
+// 			mD += sh.Magnitude(sh.L[o])
+// 		}
+// 		mD /= float64(sh.nobjs)
+// 		// Report status.
+// 		fmt.Printf("Epoch %6d: E=%.8e S=%.8e D=%.8e (alpha=%.4e; epoch took %v; %v elapsed).\n", epoch+1, mE, mS, mD, alpha, time.Now().Sub(t), time.Now().Sub(T))
+// 		// Write position of objects.
+// 		if output_prefix != "" {
+// 			sh.WriteLocations(fmt.Sprintf("%v_%v.csv", output_prefix, epoch+1))
+// 		}
+// 	}
+// }
+
+// func (sh *Shoehorn) LearnLineSearch(step_size float64, l2 float64, alpha float64, numepochs int, output_prefix string) {
+// 	/*
+// 	Performs line search along each gradient direction to find the best location for objects.
+// 	*/
+// 	var (
+// 		epoch, object, j, try, max_tries int
+// 		min_weight, step, err_baseline, err_search, gmag float64
+// 		L, G []float64
+// 		R ReconstructionSet
+// 		T, t time.Time
+// 	)
+// 	min_weight = 0.0
+// 	max_tries = 100
+// 	L = make([]float64, sh.ndims)
+// 	// Iterate through epochs.
+// 	T = time.Now()
+// 	for epoch = 0; epoch < numepochs; epoch++ {
+// 		// Perform line search for each object.
+// 		for object = 0; object < sh.nobjs; object++ {
+// 			t = time.Now()
+// 			// Get gradient and baseline error for object.
+// 			R = sh.Reconstructions(min_weight)
+// 			G, err_baseline = sh.Gradient(object, min_weight, alpha, l2, R)
+// 			gmag = sh.Magnitude(G)
+// 			// Store current object location.
+// 			for j = 0; j < sh.ndims; j++ {
+// 				L[j] = sh.L[object][j]
+// 			}
+// 			// Perform line search.
+// 			err_search = math.MaxFloat64
+// 			step = step_size
+// 			for try = 0; try < max_tries; try++ {
+// 				// Relocate object.
+// 				for j = 0; j < sh.ndims; j++ {
+// 					sh.L[object][j] = L[j] - ((step / gmag) * G[j])
+// 				}
+// 				// Get error.
+// 				//R = sh.Reconstructions(min_weight)
+// 				_, err_search = sh.Gradient(object, min_weight, alpha, l2, R)
+// 				//
+// 				if err_search < err_baseline {
+// 					fmt.Printf("epoch=%v object=%v try=%v step=%.4e err_baseline=%.6e err_search=%.6e (took %v; %v elapsed).\n", epoch, object, try, step, err_baseline, err_search, time.Now().Sub(t), time.Now().Sub(T))
+// 					break
+// 				} else {
+// 					step *= 0.75
+// 				}
+// 			}
+// 			// Reset location if a better one wasn't found.
+// 			if try == max_tries {
+// 				for j = 0; j < sh.ndims; j++ {
+// 					sh.L[object][j] = L[j]
+// 				}
+// 			}
+// 			// Write position of objects.
+// 			if output_prefix != "" {
+// 				sh.WriteLocations(fmt.Sprintf("%v_%v.csv", output_prefix, epoch+1))
+// 			}
+// 		}
+// 	}
+// }
+
 //
 // Reconstruction methods.
 //
 
-func (sh *Shoehorn) Reconstructions(min_weight float64) (R ReconstructionSet) {
+func (sh *Shoehorn) Reconstructions(min_weight float64) (WP [][]float64, W []float64) {
 	var (
-		o                      int
-		reconstruction_channel chan ReconstructionInfo
-		ri                     ReconstructionInfo
+		o       int
+		channel chan int
 	)
+	// Initialization.
 	runtime.GOMAXPROCS(runtime.NumCPU())
-	reconstruction_channel = make(chan ReconstructionInfo, len(sh.objects))
-	for o = 0; o < sh.nobjs; o++ {
-		go sh.ReconstructionWrapper(o, min_weight, reconstruction_channel)
+	channel = make(chan int, sh.no)
+	WP = make([][]float64, sh.no)
+	W = make([]float64, sh.no)
+	// Create goroutines to compute reconstruction of each object.
+	for o = 0; o < sh.no; o++ {
+		go sh.ReconstructionWrapper(o, min_weight, WP, W, channel)
 	}
-	R.WPS = make(map[int]map[int]float64)
-	R.WS = make(map[int]float64)
-	for o = 0; o < sh.nobjs; o++ {
-		ri = <-reconstruction_channel
-		R.WPS[ri.object] = ri.WP
-		R.WS[ri.object] = ri.W
+	// Wait for all goroutines to signal completion.
+	for o = 0; o < sh.no; o++ {
+		<-channel
 	}
 	return
 }
 
-func (sh *Shoehorn) ReconstructionWrapper(object int, min_weight float64, channel chan ReconstructionInfo) {
-	var (
-		WP map[int]float64
-		W  float64
-	)
-	WP, W = sh.Reconstruction(object, min_weight)
-	channel <- ReconstructionInfo{object: object, WP: WP, W: W}
+func (sh *Shoehorn) ReconstructionWrapper(object int, min_weight float64, WP [][]float64, W []float64, channel chan int) {
+	WP[object], W[object] = sh.Reconstruction(object, min_weight)
+	channel <- 0
 	return
 }
 
-func (sh *Shoehorn) Reconstruction(object int, min_weight float64) (WP map[int]float64, W float64) {
+func (sh *Shoehorn) Reconstruction(object int, min_weight float64) (wp []float64, w float64) {
 	var (
-		feature int
-		p       float64
-		n       Neighbor
+		f int
+		n Neighbor
 	)
-	WP = make(map[int]float64)
+	wp = make([]float64, sh.nf)
 	for _, n = range sh.Neighbors(object, min_weight) {
-		W += n.weight
-		for feature, p = range sh.objects[n.object].data {
-			WP[feature] += n.weight * p
+		w += n.weight
+		for f = 0; f < sh.nf; f++ {
+			wp[f] += (n.weight * sh.O[n.object][f])
 		}
 	}
 	return
@@ -214,103 +296,104 @@ func (sh *Shoehorn) Reconstruction(object int, min_weight float64) (WP map[int]f
 func (sh *Shoehorn) Gradients(min_weight float64, alpha float64, l2 float64) (G []GradientInfo) {
 	var (
 		o                int
-		R                ReconstructionSet
 		g                GradientInfo
-		gradient_channel chan GradientInfo
+		channel chan GradientInfo
 	)
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	// Precompute reconstruction data.
-	R = sh.Reconstructions(min_weight)
+	WP, W := sh.Reconstructions(min_weight)
 	// Compute gradient information.
-	gradient_channel = make(chan GradientInfo, len(sh.objects))
-	for o = 0; o < sh.nobjs; o++ {
-		go sh.GradientWrapper(o, min_weight, alpha, l2, R, gradient_channel)
+	channel = make(chan GradientInfo, sh.no)
+	for o = 0; o < sh.no; o++ {
+		go sh.GradientWrapper(o, min_weight, alpha, l2, WP, W, channel)
 	}
 	// Sort gradient information by increasing object ID.
-	G = make([]GradientInfo, sh.nobjs)
-	for o = 0; o < sh.nobjs; o++ {
-		g = <-gradient_channel
+	G = make([]GradientInfo, sh.no)
+	for o = 0; o < sh.no; o++ {
+		g = <-channel
 		G[g.object] = g
 	}
 	return
 }
 
-func (sh *Shoehorn) GradientWrapper(object int, min_weight float64, alpha float64, l2 float64, R ReconstructionSet, channel chan GradientInfo) {
-	g, e := sh.Gradient(object, min_weight, alpha, l2, R)
+func (sh *Shoehorn) GradientWrapper(object int, min_weight float64, alpha float64, l2 float64, WP [][]float64, W []float64, channel chan GradientInfo) {
+	g, e := sh.Gradient(object, min_weight, alpha, l2, WP, W)
 	channel <- GradientInfo{object: object, gradient: g, error: e}
 	return
 }
 
-func (sh *Shoehorn) Gradient(object int, min_weight float64, alpha float64, l2 float64, R ReconstructionSet) (gradient []float64, error float64) {
+func (sh *Shoehorn) Gradient(object int, min_weight float64, alpha float64, l2 float64, WP [][]float64, W []float64) (gradient []float64, error float64) {
 	var (
-		o, j, feature                            int
+		o, j, f                            int
 		distance, weight, p, q, tmp1, tmp2, tmp3 float64
 		T1, T2                                   []float64
 		N                                        Neighbors
 		n                                        Neighbor
 	)
-	gradient = make([]float64, sh.ndims)
-	T1 = make([]float64, sh.ndims)
-	T2 = make([]float64, sh.ndims)
+	gradient = make([]float64, sh.nd)
+	T1 = make([]float64, sh.nd)
+	T2 = make([]float64, sh.nd)
 	// Compute impact of object position on its own reconstruction error.
 	N = sh.Neighbors(object, min_weight)
-	for feature, p = range sh.objects[object].data {
+	for f = 0; f < sh.nf; f++ { 
+		p = sh.O[object][f]
 		// Calculate the gradient terms.
-		for j = 0; j < sh.ndims; j++ {
+		for j = 0; j < sh.nd; j++ {
 			T1[j], T2[j] = 0.0, 0.0
 		}
 		for _, n = range N {
 			tmp1 = n.weight / n.distance
-			for j = 0; j < sh.ndims; j++ {
+			for j = 0; j < sh.nd; j++ {
 				tmp2 = tmp1 * (sh.L[n.object][j] - sh.L[object][j])
-				T1[j] += tmp2 * sh.objects[n.object].data[feature]
+				T1[j] += tmp2 * sh.O[n.object][f]
 				T2[j] += tmp2
 			}
 		}
 		// Set reconstruction probability.
-		q = (alpha * p) + ((1.0 - alpha) * (R.WPS[object][feature] / R.WS[object]))
+		q = (alpha * p) + ((1.0 - alpha) * (WP[object][f] / W[object]))
 		// Update gradient information.
 		//tmp1 = (alpha - 1.0) * p / q
 		tmp1 = 2.0 * (p - q) * (alpha - 1.0)
-		for j = 0; j < sh.ndims; j++ {
-			gradient[j] += tmp1 * (((T1[j] * R.WS[object]) - (R.WPS[object][feature] * T2[j])) / (R.WS[object] * R.WS[object]))
+		for j = 0; j < sh.nd; j++ {
+			gradient[j] += tmp1 * (((T1[j] * W[object]) - (WP[object][f] * T2[j])) / (W[object] * W[object]))
 		}
 		// Update error.
 		//error += p * math.Log(p/q)
 		error += math.Pow(p-q, 2.0)
 	}
 	// Compute impact of object position on reconstruction error of other objects.
-	for o = 0; o < sh.nobjs; o++ {
+	for o = 0; o < sh.no; o++ {
 		if o != object {
 			// Calculate distance and weight between current object and object being reconstructed.
 			distance = 0.0
-			for j = 0; j < sh.ndims; j++ {
+			for j = 0; j < sh.nd; j++ {
 				distance += math.Pow(sh.L[object][j]-sh.L[o][j], 2.0)
 			}
 			distance = math.Pow(distance, 0.5)
 			weight = math.Exp(-distance)
 			tmp1 = weight / distance
 			// Iterate over features of object getting reconstructed.
-			for feature, p = range sh.objects[o].data {
+			for f = 0; f < sh.nf; f++ {
+				p = sh.O[o][f]
 				// Update gradient information.
 				//tmp2 = (alpha - 1.0) * p / ((alpha * p) + ((1.0 - alpha) * (R.WPS[o][feature] / R.WS[o])))
-				tmp2 = 2.0 * (p - ((alpha * p) + ((1.0 - alpha) * (R.WPS[o][feature] / R.WS[o])))) * (alpha - 1.0)
-				for j = 0; j < sh.ndims; j++ {
+				tmp2 = 2.0 * (p - ((alpha * p) + ((1.0 - alpha) * (WP[o][f] / W[o])))) * (alpha - 1.0)
+				for j = 0; j < sh.nd; j++ {
 					tmp3 = tmp1 * (sh.L[o][j] - sh.L[object][j])
-					gradient[j] += tmp2 * (((R.WS[o] * tmp3 * sh.objects[object].data[feature]) - (R.WPS[o][feature] * tmp3)) / (R.WS[o] * R.WS[o]))
+					gradient[j] += tmp2 * (((W[o] * tmp3 * sh.O[object][f]) - (WP[o][f] * tmp3)) / (W[o] * W[o]))
 				}
 			}
 		}
 	}
 	// Account for L2 punishment.
-	for j = 0; j < sh.ndims; j++ {
+	for j = 0; j < sh.nd; j++ {
 		error += l2 * math.Pow(sh.L[object][j], 2.0)
 		gradient[j] += 2.0 * l2 * sh.L[object][j]
 	}
 	return
 }
 
-// Gradient descent methods.
+ // Gradient descent methods.
 
 func (sh *Shoehorn) GradientDescent(step_size float64, G []GradientInfo) {
 	var (
@@ -318,8 +401,8 @@ func (sh *Shoehorn) GradientDescent(step_size float64, G []GradientInfo) {
 		scale float64
 	)
 	for o = 0; o < len(G); o++ {
-		scale = step_size / sh.Magnitude(G[o].gradient)
-		for j = 0; j < sh.ndims; j++ {
+		scale = step_size / VectorMagnitude(G[o].gradient)
+		for j = 0; j < sh.nd; j++ {
 			sh.L[G[o].object][j] -= scale * G[o].gradient[j]
 		}
 	}
@@ -334,7 +417,7 @@ func (sh *Shoehorn) Rprop(S [][]float64, G0 []GradientInfo, G1 []GradientInfo, s
 	inc = 1.01
 	dec = 0.5
 	for o = 0; o < len(G1); o++ {
-		for j = 0; j < sh.ndims; j++ {
+		for j = 0; j < sh.nd; j++ {
 			if G0 != nil {
 				// Update the step size (consistent gradient directions get a boost, inconsistent directions get reduced).
 				gradient_product = G0[o].gradient[j] * G1[o].gradient[j]
@@ -367,11 +450,11 @@ func (sh *Shoehorn) Neighbors(object int, min_weight float64) (N Neighbors) {
 		o, j             int
 		distance, weight float64
 	)
-	for o = 0; o < sh.nobjs; o++ {
+	for o = 0; o < sh.no; o++ {
 		if o != object {
 			// Calculate distance.
 			distance = 0.0
-			for j = 0; j < sh.ndims; j++ {
+			for j = 0; j < sh.nd; j++ {
 				distance += math.Pow(sh.L[object][j]-sh.L[o][j], 2.0)
 			}
 			distance = math.Pow(distance, 0.5)
@@ -390,26 +473,28 @@ func (sh *Shoehorn) Neighbors(object int, min_weight float64) (N Neighbors) {
 //
 
 func (sh *Shoehorn) ObjectIDs() (object_ids []int) {
-	for id := 0; id < sh.nobjs; id++ {
+	for id := 0; id < sh.no; id++ {
 		object_ids = append(object_ids, id)
 	}
 	return
 }
 
-// Ensures that the feature values for all objects have the same magnitude.
 func (sh *Shoehorn) NormalizeObjects(metric float64) {
+	/*
+		Normalizes the magnitude of object representations.
+	*/
 	var (
-		o, k   int
-		v, mag float64
+		o, f int
+		mag  float64
 	)
-	for o = 0; o < sh.nobjs; o++ {
+	for o = 0; o < sh.no; o++ {
 		mag = 0.0
-		for _, v = range sh.objects[o].data {
-			mag += math.Pow(v, metric)
+		for f = 0; f < sh.nf; f++ {
+			mag += math.Pow(sh.O[o][f], metric)
 		}
 		mag = math.Pow(mag, 1.0/metric)
-		for k, v = range sh.objects[o].data {
-			sh.objects[o].Set(k, v/mag)
+		for f = 0; f < sh.nf; f++ {
+			sh.O[o][f] /= mag
 		}
 	}
 	return
@@ -418,8 +503,8 @@ func (sh *Shoehorn) NormalizeObjects(metric float64) {
 // Returns information about the distance of points from the origin.
 func (sh *Shoehorn) DistanceInformation() (min, mean, max float64) {
 	min, mean, max = math.MaxFloat64, 0.0, 0.0
-	for o := 0; o < sh.nobjs; o++ {
-		distance := sh.Magnitude(sh.L[o])
+	for o := 0; o < sh.no; o++ {
+		distance := VectorMagnitude(sh.L[o])
 		if distance < min {
 			min = distance
 		}
@@ -428,24 +513,16 @@ func (sh *Shoehorn) DistanceInformation() (min, mean, max float64) {
 			max = distance
 		}
 	}
-	mean /= float64(sh.nobjs)
+	mean /= float64(sh.no)
 	return
 }
 
 // Creates new storage for position update.
 func (sh *Shoehorn) GetObjectStore() (S [][]float64) {
-	S = make([][]float64, len(sh.objects))
-	for object := 0; object < sh.nobjs; object++ {
-		S[object] = make([]float64, sh.ndims)
+	S = make([][]float64, sh.no)
+	for object := 0; object < sh.no; object++ {
+		S[object] = make([]float64, sh.nd)
 	}
-	return
-}
-
-func (sh *Shoehorn) Magnitude(V []float64) (mag float64) {
-	for i := 0; i < len(V); i++ {
-		mag += V[i] * V[i]
-	}
-	mag = math.Pow(mag, 0.5)
 	return
 }
 
@@ -454,31 +531,33 @@ func (sh *Shoehorn) Rescale(radius float64) {
 		o, j int
 	)
 	// Calculate centroid and maximum distance from origin.
-	centroid := make([]float64, sh.ndims)
+	centroid := make([]float64, sh.nd)
 	max_distance := 0.0
-	for o = 0; o < sh.nobjs; o++ {
-		for j = 0; j < sh.ndims; j++ {
+	for o = 0; o < sh.no; o++ {
+		for j = 0; j < sh.nd; j++ {
 			centroid[j] += sh.L[o][j]
 		}
-		distance := sh.Magnitude(sh.L[o])
+		distance := VectorMagnitude(sh.L[o])
 		if distance > max_distance {
 			max_distance = distance
 		}
 	}
-	for j = 0; j < sh.ndims; j++ {
-		centroid[j] /= float64(sh.nobjs)
+	for j = 0; j < sh.nd; j++ {
+		centroid[j] /= float64(sh.no)
 	}
 	// Recenter and rescale each location.
-	for o = 0; o < sh.nobjs; o++ {
-		for j = 0; j < sh.ndims; j++ {
+	for o = 0; o < sh.no; o++ {
+		for j = 0; j < sh.nd; j++ {
 			sh.L[o][j] = (sh.L[o][j] - centroid[j]) * (radius / max_distance)
 		}
 	}
 	return
 }
 
-// Writes the current locations of objects to a file.
 func (sh *Shoehorn) WriteLocations(path string) {
+	/*
+	Writes the current locations of objects to a file.
+	*/
 	// Initialize the output file.
 	of, err := os.Create(path)
 	if err != nil {
@@ -486,21 +565,20 @@ func (sh *Shoehorn) WriteLocations(path string) {
 	}
 	defer of.Close()
 	// Write object locations to file.
-	for object_name, object := range sh.object_ixs {
+	for object_name, object := range sh.oixs {
 		line := make([]string, 0)
 		line = append(line, object_name)
-		for i := 0; i < sh.ndims; i++ {
-			line = append(line, fmt.Sprintf("%v", sh.L[object][i]))
+		for j := 0; j < sh.nd; j++ {
+			line = append(line, fmt.Sprintf("%v", sh.L[object][j]))
 		}
 		of.Write([]byte(fmt.Sprintf("%v\n", strings.Join(line, ","))))
 	}
 }
 
-//
-// Constructs a DataSet from a CSV file of {object_name, feature_name, feature_value} triples.
-//
-
 func NewShoehorn(filename string, ndims int, downsample float64) (sh *Shoehorn) {
+	/*
+		Reads a CSV file of {object, feature, value} triples and parse them to create a shoehorn object.
+	*/
 	var (
 		bfr                  *bufio.Reader
 		seenobjs, sampleobjs map[string]bool
@@ -509,15 +587,14 @@ func NewShoehorn(filename string, ndims int, downsample float64) (sh *Shoehorn) 
 	sampleobjs = make(map[string]bool)
 	// Seed the random number generator.
 	rand.Seed(time.Now().Unix())
-	// Initialize the data set.
-	sh = &Shoehorn{ndims: ndims, feature_ixs: make(map[string]int), object_ixs: make(map[string]int)}
 	// Open the file for reading.
 	fh, err := os.Open(filename)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer fh.Close()
-	// Read the lines of the file one at a time.
+	// Read the lines of the file one at a time and grab them if sampled.
+	S := make([][]string, 0)
 	bfr = bufio.NewReaderSize(fh, 1024*16)
 	for line, isprefix, err := bfr.ReadLine(); err != io.EOF; {
 		// Error handling.
@@ -530,7 +607,6 @@ func NewShoehorn(filename string, ndims int, downsample float64) (sh *Shoehorn) 
 		// Extract the three values on the line.
 		strvals := strings.Split(string(line), ",")
 		if len(strvals) == 3 {
-			value_float, _ := strconv.ParseFloat(strvals[2], 64)
 			// If the object has not been seen before, decide whether to include it.
 			_, seen := seenobjs[strvals[0]]
 			if !seen {
@@ -539,15 +615,16 @@ func NewShoehorn(filename string, ndims int, downsample float64) (sh *Shoehorn) 
 				}
 			}
 			seenobjs[strvals[0]] = true
-			// Store the data in the data set if the object is to be sampled.
+			// Add the data to the store if the object is to be sampled.
 			if sampleobjs[strvals[0]] {
-				sh.Store(strvals[0], strvals[1], value_float)
+				S = append(S, strvals)
 			}
 		}
 		// Read from the file for the next iteration.
 		line, isprefix, err = bfr.ReadLine()
 	}
-	// Normalize each vector so they sum to 1.
-	sh.NormalizeObjects(2.0)
+	// Create shoehorn object from selected data.
+	sh = &Shoehorn{}
+	sh.Create(S, ndims)
 	return
 }

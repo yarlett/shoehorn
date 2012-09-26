@@ -1,5 +1,9 @@
 package shoehorn
 
+import (
+	"math"
+)
+
 //
 // Definitions allow objects to be sorted in order of decreasing weight.
 //
@@ -33,21 +37,6 @@ func (GIS GradientInfos) Swap(i, j int)      { GIS[i], GIS[j] = GIS[j], GIS[i] }
 func (GIS GradientInfos) Less(i, j int) bool { return GIS[i].object < GIS[j].object }
 
 //
-// Reconstruction structures.
-//
-
-type ReconstructionInfo struct {
-	object int
-	WP     map[int]float64
-	W      float64
-}
-
-type ReconstructionSet struct {
-	WPS map[int]map[int]float64
-	WS  map[int]float64
-}
-
-//
 // Function that returns the required value of a parameter given the current epoch and the start and end points of the parameter.
 //
 
@@ -61,6 +50,24 @@ func ParameterSetter(current_epoch int, epoch0 int, val0 float64, epoch1 int, va
 		parameter = val0 + (float64(current_epoch-epoch0) * step)
 	case current_epoch >= epoch1:
 		parameter = val1
+	}
+	return
+}
+
+// Miscellaneous vector functions.
+
+func VectorMagnitude(V []float64) (mag float64) {
+	for i := 0; i < len(V); i++ {
+		mag += math.Pow(V[i], 2.0)
+	}
+	mag = math.Pow(mag, 0.5)
+	return
+}
+
+func ReturnMatrix(i, j int) (M [][]float64) {
+	M = make([][]float64, i)
+	for x := 0; x < i; x++ {
+		M[x] = make([]float64, j)
 	}
 	return
 }
