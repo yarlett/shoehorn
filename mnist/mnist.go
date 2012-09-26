@@ -18,5 +18,5 @@ func main() {
 
 	// Perform gradient-descent with L2 punishment initially.
 	sh.Rescale(1e-6)
-	sh.LearnGradientDescent(step_size, l2, alpha, numepochs, "tmp/locations")
+	sh.LearnRprop(step_size, l2, alpha, numepochs, "tmp/locations")
 }

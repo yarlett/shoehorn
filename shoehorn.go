@@ -125,62 +125,62 @@ func (sh *Shoehorn) LearnGradientDescent(step_size float64, l2 float64, alpha fl
 	}
 }
 
-// func (sh *Shoehorn) Learn(step_size float64, l2 float64, alpha float64, numepochs int, output_prefix string) {
-// 	/*
-// 	Uses the Rprop algorithm to find the best location for objects.
-// 	*/
-// 	var (
-// 		epoch, o, j            int
-// 		min_weight, mE, mS, mD float64
-// 		S                      [][]float64
-// 		G0, G1                 []GradientInfo
-// 		T, t                   time.Time
-// 	)
-// 	// Initialization.
-// 	T = time.Now()
-// 	min_weight = 0.0
-// 	S = sh.GetObjectStore()
-// 	for o = 0; o < sh.nobjs; o++ {
-// 		for j = 0; j < sh.ndims; j++ {
-// 			S[o][j] = step_size
-// 		}
-// 	}
-// 	// Perform learning.
-// 	for epoch = 0; epoch < numepochs; epoch++ {
-// 		t = time.Now()
-// 		// Get gradient for all objects.
-// 		G1 = sh.Gradients(min_weight, alpha, l2)
-// 		// Update positions using Rprop algorithm.
-// 		S = sh.Rprop(S, G0, G1, step_size/1000., step_size*1000.)
-// 		G0 = G1
-// 		// Calculate current error.
-// 		mE = 0.0
-// 		for o = 0; o < len(G1); o++ {
-// 			mE += G1[o].error
-// 		}
-// 		mE /= float64(sh.nobjs)
-// 		// Calculate current average step size.
-// 		mS = 0.0
-// 		for o = 0; o < len(S); o++ {
-// 			for j = 0; j < len(S[o]); j++ {
-// 				mS += S[o][j]
-// 			}
-// 		}
-// 		mS /= float64(sh.nobjs * sh.ndims)
-// 		// Calculate average distance from origin.
-// 		mD = 0.0
-// 		for o = 0; o < sh.nobjs; o++ {
-// 			mD += sh.Magnitude(sh.L[o])
-// 		}
-// 		mD /= float64(sh.nobjs)
-// 		// Report status.
-// 		fmt.Printf("Epoch %6d: E=%.8e S=%.8e D=%.8e (alpha=%.4e; epoch took %v; %v elapsed).\n", epoch+1, mE, mS, mD, alpha, time.Now().Sub(t), time.Now().Sub(T))
-// 		// Write position of objects.
-// 		if output_prefix != "" {
-// 			sh.WriteLocations(fmt.Sprintf("%v_%v.csv", output_prefix, epoch+1))
-// 		}
-// 	}
-// }
+func (sh *Shoehorn) LearnRprop(step_size float64, l2 float64, alpha float64, numepochs int, output_prefix string) {
+	/*
+	Uses the Rprop algorithm to find the best location for objects.
+	*/
+	var (
+		epoch, o, j            int
+		min_weight, mE, mS, mD float64
+		S                      [][]float64
+		G0, G1                 []GradientInfo
+		T, t                   time.Time
+	)
+	// Initialization.
+	T = time.Now()
+	min_weight = 0.0
+	S = ReturnMatrix(sh.no, sh.nd)
+	for o = 0; o < sh.no; o++ {
+		for j = 0; j < sh.nd; j++ {
+			S[o][j] = step_size
+		}
+	}
+	// Perform learning.
+	for epoch = 0; epoch < numepochs; epoch++ {
+		t = time.Now()
+		// Get gradient for all objects.
+		G1 = sh.Gradients(min_weight, alpha, l2)
+		// Update positions using Rprop algorithm.
+		S = sh.Rprop(S, G0, G1, step_size/1000., step_size*1000.)
+		G0 = G1
+		// Calculate current error.
+		mE = 0.0
+		for o = 0; o < len(G1); o++ {
+			mE += G1[o].error
+		}
+		mE /= float64(sh.no)
+		// Calculate current average step size.
+		mS = 0.0
+		for o = 0; o < len(S); o++ {
+			for j = 0; j < len(S[o]); j++ {
+				mS += S[o][j]
+			}
+		}
+		mS /= float64(sh.no * sh.nd)
+		// Calculate average distance from origin.
+		mD = 0.0
+		for o = 0; o < sh.no; o++ {
+			mD += VectorMagnitude(sh.L[o])
+		}
+		mD /= float64(sh.no)
+		// Report status.
+		fmt.Printf("Epoch %6d: E=%.8e S=%.8e D=%.8e (alpha=%.4e; epoch took %v; %v elapsed).\n", epoch+1, mE, mS, mD, alpha, time.Now().Sub(t), time.Now().Sub(T))
+		// Write position of objects.
+		if output_prefix != "" {
+			sh.WriteLocations(fmt.Sprintf("%v_%v.csv", output_prefix, epoch+1))
+		}
+	}
+}
 
 // func (sh *Shoehorn) LearnLineSearch(step_size float64, l2 float64, alpha float64, numepochs int, output_prefix string) {
 // 	/*
@@ -514,15 +514,6 @@ func (sh *Shoehorn) DistanceInformation() (min, mean, max float64) {
 		}
 	}
 	mean /= float64(sh.no)
-	return
-}
-
-// Creates new storage for position update.
-func (sh *Shoehorn) GetObjectStore() (S [][]float64) {
-	S = make([][]float64, sh.no)
-	for object := 0; object < sh.no; object++ {
-		S[object] = make([]float64, sh.nd)
-	}
 	return
 }
 
