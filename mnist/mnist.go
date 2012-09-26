@@ -14,9 +14,9 @@ func main() {
 	fmt.Printf("Took %v to create data set of %d objects exhibiting %d distinct features.\n", time.Now().Sub(t1), len(sh.O), len(sh.O[0]))
 
 	// Define parameters.
-	step_size, l2, alpha, numepochs := 0.01, 0.05, 0.0, 2500
+	step_size, l2, alpha, numepochs := 0.005, 0.1, 0.0, 2500
 
 	// Perform gradient-descent with L2 punishment initially.
-	sh.Rescale(1e-6)
-	sh.LearnRprop(step_size, l2, alpha, numepochs, "tmp/locations")
+	sh.Rescale(1e-3)
+	sh.LearnGradientDescent(step_size, l2, alpha, numepochs, "tmp/locations")
 }
