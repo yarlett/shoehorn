@@ -41,13 +41,15 @@ func (GIS GradientInfos) Less(i, j int) bool { return GIS[i].object < GIS[j].obj
 //
 
 func ParameterSetter(current_epoch int, epoch0 int, val0 float64, epoch1 int, val1 float64) (parameter float64) {
-	var step float64
+	//var step float64
 	switch {
 	case current_epoch < epoch0:
 		parameter = val0
 	case (current_epoch >= epoch0) && (current_epoch < epoch1):
-		step = (val1 - val0) / float64(epoch1-epoch0)
-		parameter = val0 + (float64(current_epoch-epoch0) * step)
+		// step = (val1 - val0) / float64(epoch1-epoch0)
+		// parameter = val0 + (float64(current_epoch-epoch0) * step)
+		multiplier := math.Exp(math.Log(val1/val0) / float64(epoch1-epoch0))
+		parameter = val0 * math.Pow(multiplier, float64(current_epoch-epoch0))
 	case current_epoch >= epoch1:
 		parameter = val1
 	}

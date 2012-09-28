@@ -84,10 +84,10 @@ func (sh *Shoehorn) LearnGradientDescent(step_size float64, l2 float64, alpha fl
 		Uses gradient descent to find the best location for objects.
 	*/
 	var (
-		epoch, o           int
-		min_weight, mE, mD float64
-		G                  []GradientInfo
-		T, t               time.Time
+		epoch, o          int
+		min_weight, e, mD float64
+		G                 []GradientInfo
+		T, t              time.Time
 	)
 	// Initialization.
 	T = time.Now()
@@ -95,16 +95,19 @@ func (sh *Shoehorn) LearnGradientDescent(step_size float64, l2 float64, alpha fl
 	// Perform learning.
 	for epoch = 0; epoch < numepochs; epoch++ {
 		t = time.Now()
+		// Set parameters.
+		radius := ParameterSetter(epoch, 0, 0.1, numepochs, 3.0)
+		radius_proportion := ParameterSetter(epoch, 0, 2.0, numepochs, 0.1)
 		// Get gradient for all objects.
 		G = sh.Gradients(min_weight, alpha, l2)
 		// Update positions using gradient descent.
-		sh.GradientDescent(step_size, G, 0.01)
+		sh.GradientDescent(radius*radius_proportion, G, 1.0)
 		// Calculate current error.
-		mE = 0.0
+		e = 0.0
 		for o = 0; o < sh.no; o++ {
-			mE += G[o].error
+			e += G[o].error
 		}
-		mE /= float64(sh.no)
+		e /= float64(sh.no)
 		// Calculate average distance from origin.
 		mD = 0.0
 		for o = 0; o < sh.no; o++ {
@@ -112,11 +115,12 @@ func (sh *Shoehorn) LearnGradientDescent(step_size float64, l2 float64, alpha fl
 		}
 		mD /= float64(sh.no)
 		// Report status.
-		fmt.Printf("Epoch %6d: E=%.8e S=%.8e D=%.8e (alpha=%.4e; epoch took %v; %v elapsed).\n", epoch+1, mE, step_size, mD, alpha, time.Now().Sub(t), time.Now().Sub(T))
+		fmt.Printf("Epoch %6d: E=%.8e S=%.8e D=%.8e (radius=%.4e proportion=%.4e; epoch took %v; %v elapsed).\n", epoch+1, e, step_size, mD, radius, radius_proportion, time.Now().Sub(t), time.Now().Sub(T))
 		// Write position of objects.
 		if output_prefix != "" {
 			sh.WriteLocations(fmt.Sprintf("%v_%v.csv", output_prefix, epoch+1))
 		}
+		sh.Rescale(radius)
 	}
 }
 
@@ -146,7 +150,7 @@ func (sh *Shoehorn) LearnRprop(step_size float64, l2 float64, alpha float64, num
 		// Get gradient for all objects.
 		G1 = sh.Gradients(min_weight, alpha, l2)
 		// Update positions using Rprop algorithm.
-		S = sh.Rprop(S, G0, G1, 1e-3, step_size*10.)
+		S = sh.Rprop(S, G0, G1, 1e-3, step_size*100., 1.0)
 		G0 = G1
 		// Calculate current error.
 		mE = 0.0
@@ -182,60 +186,67 @@ func (sh *Shoehorn) LearnLineSearch(step_size float64, l2 float64, alpha float64
 		Performs line search along each gradient direction to find the best location for objects.
 	*/
 	var (
-		epoch, object, o, j, try, max_tries int
-		min_weight, step, e0, e1, gmag      float64
-		L                                   []float64
-		G0, G1                              []GradientInfo
-		T, t                                time.Time
+		epoch, o, j, g, try, numtries  int
+		os                             []int
+		min_weight, gmag, E0, E1, step float64
+		L                              []float64
+		G0, G1                         []GradientInfo
+		T, t                           time.Time
 	)
-	min_weight = 0.0
-	max_tries = 50
-	L = make([]float64, sh.nd)
-	// Iterate through epochs.
+	// Initialization.
 	T = time.Now()
+	min_weight = 0.0
+	numtries = 20
+	L = make([]float64, sh.nd)
+	// Perform epochs of learning.
 	for epoch = 0; epoch < numepochs; epoch++ {
-		// Perform line search for each object.
-		for object = 0; object < sh.no; object++ {
+		// Cycle through objects in a random order.
+		os = rand.Perm(sh.no)
+		for o = 0; o < len(os); o++ {
 			t = time.Now()
-			// Get gradient and baseline error for object.
+			// Get gradients and baseline error.
 			G0 = sh.Gradients(min_weight, alpha, l2)
-			e0 = 0.0
-			for o = 0; o < sh.no; o++ {
-				e0 += G0[o].error
+			E0 = 0.0
+			for g = 0; g < len(G0); g++ {
+				E0 += G0[g].error
 			}
-			gmag = VectorMagnitude(G0[object].gradient)
-			// Store current object location.
+			E0 /= float64(sh.no)
+			gmag = VectorMagnitude(G0[os[o]].gradient)
+			// Save current location of object.
 			for j = 0; j < sh.nd; j++ {
-				L[j] = sh.L[object][j]
+				L[j] = sh.L[os[o]][j]
 			}
 			// Perform line search.
-			e1 = math.MaxFloat64
-			step = step_size
-			for try = 0; try < max_tries; try++ {
+			_, step, _ = sh.DistanceInformation()
+			step *= 2.0
+			for try = 0; try < numtries; try++ {
 				// Relocate object.
 				for j = 0; j < sh.nd; j++ {
-					sh.L[object][j] = L[j] - ((step / gmag) * G0[object].gradient[j])
+					sh.L[os[o]][j] = L[j] - ((step / gmag) * G0[os[o]].gradient[j])
 				}
-				// Get line search error.
+				// Get error at this location.
 				G1 = sh.Gradients(min_weight, alpha, l2)
-				e1 = 0.0
-				for o = 0; o < sh.no; o++ {
-					e1 += G1[o].error
+				E1 = 0.0
+				for g = 0; g < len(G1); g++ {
+					E1 += G1[g].error
 				}
-				// Terminate search if error improved, else reduce step size along line.
-				if e1 < e0 {
-					fmt.Printf("epoch=%v object=%v try=%v step=%.4e e0=%.6e e1=%.6e (took %v; %v elapsed).\n", epoch, object, try, step, e0, e1, time.Now().Sub(t), time.Now().Sub(T))
+				E1 /= float64(sh.no)
+				// Terminate search if error reduced.
+				if E1 < E0 {
 					break
 				} else {
 					step *= 0.5
 				}
 			}
-			// Reset location if a better one wasn't found.
-			if try == max_tries {
+			// Reset object to original position if error not improved.
+			if E1 >= E0 {
 				for j = 0; j < sh.nd; j++ {
-					sh.L[object][j] = L[j]
+					sh.L[os[o]][j] = L[j]
 				}
+				E1 = E0
 			}
+			// Report status.
+			fmt.Printf("Epoch %6d Object %6d: tries=%5d E0=%.8e E1=%.8e S=%.8e (alpha=%.4e; took %v; %v elapsed).\n", epoch+1, os[o], try+1, E0, E1, step, alpha, time.Now().Sub(t), time.Now().Sub(T))
 			// Write position of objects.
 			if output_prefix != "" {
 				sh.WriteLocations(fmt.Sprintf("%v_%v.csv", output_prefix, epoch+1))
@@ -308,7 +319,7 @@ func (sh *Shoehorn) Gradients(min_weight float64, alpha float64, l2 float64) (G 
 	for o = 0; o < sh.no; o++ {
 		go sh.GradientWrapper(o, min_weight, alpha, l2, WP, W, channel)
 	}
-	// Sort gradient information by increasing object ID.
+	// Retrieve gradient information.
 	G = make([]GradientInfo, sh.no)
 	for o = 0; o < sh.no; o++ {
 		g = <-channel
@@ -412,14 +423,20 @@ func (sh *Shoehorn) GradientDescent(step_size float64, G []GradientInfo, downsam
 	return
 }
 
-func (sh *Shoehorn) Rprop(S [][]float64, G0 []GradientInfo, G1 []GradientInfo, step_size_min float64, step_size_max float64) [][]float64 {
+func (sh *Shoehorn) Rprop(S [][]float64, G0 []GradientInfo, G1 []GradientInfo, step_size_min float64, step_size_max float64, downsample float64) [][]float64 {
 	var (
 		o, j                       int
 		gradient_product, inc, dec float64
+		move                       bool
 	)
 	inc = 1.01
 	dec = 0.5
 	for o = 0; o < len(G1); o++ {
+		if rand.Float64() < downsample {
+			move = true
+		} else {
+			move = false
+		}
 		for j = 0; j < sh.nd; j++ {
 			if G0 != nil {
 				// Update the step size (consistent gradient directions get a boost, inconsistent directions get reduced).
@@ -438,7 +455,9 @@ func (sh *Shoehorn) Rprop(S [][]float64, G0 []GradientInfo, G1 []GradientInfo, s
 				}
 			}
 			// Update the position based on the sign of its magnitude and the learned step size (RProp doesn't use gradient magnitudes).
-			sh.L[o][j] -= math.Copysign(S[o][j], G1[o].gradient[j])
+			if move {
+				sh.L[o][j] -= math.Copysign(S[o][j], G1[o].gradient[j])
+			}
 		}
 	}
 	return S
@@ -520,6 +539,19 @@ func (sh *Shoehorn) DistanceInformation() (min, mean, max float64) {
 	return
 }
 
+func (sh *Shoehorn) LimitLocations(radius float64) {
+	for o := 0; o < sh.no; o++ {
+		mg := VectorMagnitude(sh.L[o])
+		if mg > radius {
+			scale := radius / mg
+			for j := 0; j < sh.nd; j++ {
+				sh.L[o][j] *= scale
+			}
+		}
+	}
+	return
+}
+
 func (sh *Shoehorn) Rescale(radius float64) {
 	var (
 		o, j int
@@ -580,7 +612,7 @@ func NewShoehorn(filename string, ndims int, downsample float64) (sh *Shoehorn) 
 	seenobjs = make(map[string]bool)
 	sampleobjs = make(map[string]bool)
 	// Seed the random number generator.
-	rand.Seed(time.Now().Unix())
+	//rand.Seed(time.Now().Unix())
 	// Open the file for reading.
 	fh, err := os.Open(filename)
 	if err != nil {
