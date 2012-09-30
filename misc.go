@@ -9,7 +9,6 @@ import (
 //
 
 type Neighbor struct {
-	object   int
 	distance float64
 	weight   float64
 }

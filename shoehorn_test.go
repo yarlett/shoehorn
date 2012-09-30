@@ -10,29 +10,30 @@ import (
 // Some general parameters.
 var (
 	NDIMS      int     = 2
-	MIN_WEIGHT float64 = 0.0
 	ALPHA      float64 = 0.01
 	L2         float64 = 1.0
 )
 
 // Returns a Shoehorn object initialized with some test data.
-func GetTestData(nobjs, ndims int) (sh Shoehorn) {
+func GetTestData(nobjs, nd int) (sh Shoehorn) {
 	var (
 		o, j                      int
-		object_name, feature_name string
-		feature_value             float64
+		S                         [][]string
 	)
-	sh = Shoehorn{ndims: ndims, feature_ixs: make(map[string]int), object_ixs: make(map[string]int)}
 	// Generate random object data.
+	S = make([][]string, 0)
 	for o = 0; o < nobjs; o++ {
-		object_name = fmt.Sprintf("TestObject %v", o)
-		for j = 0; j < ndims; j++ {
-			feature_name = fmt.Sprintf("Feature %v", j)
-			feature_value = rand.Float64()
-			sh.Store(object_name, feature_name, feature_value)
+		s := make([]string, 3)
+		s[0] = fmt.Sprintf("TestObject %v", o)
+		for j = 0; j < nd; j++ {
+			s[1] = fmt.Sprintf("Feature %v", j)
+			s[2] = fmt.Sprintf("%v", rand.Float64())
+			S = append(S, s)
 		}
 	}
-	// Normalize sums of data.
+	// Create showhoen instance from the data.
+	sh = Shoehorn{}
+	sh.Create(S, nd)
 	sh.NormalizeObjects(1.0)
 	return
 }
@@ -42,12 +43,12 @@ func TestReconstructions(t *testing.T) {
 	// Initialize the test data.
 	sh := GetTestData(50, 3)
 	// Get the object reconstruction data.
-	R := sh.Reconstructions(MIN_WEIGHT)
+	sh.SetReconstructions()
 	// Check the reconstruction of each object.
-	for o := 0; o < sh.nobjs; o++ {
+	for o := 0; o < sh.no; o++ {
 		sump, sumq := 0.0, 0.0
-		for f, p := range sh.objects[o].data {
-			q := (ALPHA * p) + ((1.0 - ALPHA) * (R.WPS[o][f] / R.WS[o]))
+		for f, p := range sh.O[o] {
+			q := (ALPHA * p) + ((1.0 - ALPHA) * (sh.WP[o][f] / sh.W[o]))
 			sump += p
 			sumq += q
 		}
@@ -60,43 +61,36 @@ func TestReconstructions(t *testing.T) {
 // Checks that the gradient function and its approximation are close to one another.
 func TestGradient(t *testing.T) {
 	var (
-		o, j, k                        int
+		o, j                        int
 		approx_grad, pcerr, h, Eh, Enh float64
-		G0, G1                         []GradientInfo
+		G                         [][]float64
 		sh                             Shoehorn
 	)
 	// Initialize test data.
 	sh = GetTestData(50, 3)
 	h = 1e-6 // Step size used when approximating gradient.
 	// Compute and save gradient information for objects.
-	G0 = sh.Gradients(MIN_WEIGHT, ALPHA, L2)
+	sh.SetGradients(ALPHA, L2)
+	G = sh.CopyGradient()
 	// Iterate over the position of each object in each dimension.
-	for o = 0; o < sh.nobjs; o++ {
-		for j = 0; j < sh.ndims; j++ {
+	for o = 0; o < sh.no; o++ {
+		for j = 0; j < sh.nd; j++ {
 			// Calculate error at x - h.
 			sh.L[o][j] -= h
-			G1 = sh.Gradients(MIN_WEIGHT, ALPHA, L2)
-			Enh = 0.0
-			for k = 0; k < len(G1); k++ {
-				Enh += G1[k].error
-			}
-			//Enh = sh.Error(MIN_WEIGHT, ALPHA, L2)
+			sh.SetErrors(ALPHA, L2)
+			Enh = sh.CurrentError() * float64(sh.no)
 			// Calculate error at x + h.
 			sh.L[o][j] += 2.0 * h
-			G1 = sh.Gradients(MIN_WEIGHT, ALPHA, L2)
-			Eh = 0.0
-			for k = 0; k < len(G1); k++ {
-				Eh += G1[k].error
-			}
-			//Eh = sh.Error(MIN_WEIGHT, ALPHA, L2)
+			sh.SetErrors(ALPHA, L2)
+			Eh = sh.CurrentError() * float64(sh.no)
 			// Reset x to original position.
 			sh.L[o][j] -= h
 			// Calculate approximate gradient.
 			approx_grad = (Eh - Enh) / (2.0 * h)
 			// Compare actual and approximated gradients.
-			pcerr = math.Abs((G0[o].gradient[j]-approx_grad)/G0[o].gradient[j]) * 100.0
+			pcerr = math.Abs((G[o][j]-approx_grad)/G[o][j]) * 100.0
 			if pcerr > 0.05 {
-				t.Errorf("Discrepancy in gradient for object %3d in dimension %3d: %3.6f%% Error: h=%e: Analytic=%2.10e; Approximated=%2.10e.\n", o, j, pcerr, h, G0[o].gradient[j], approx_grad)
+				t.Errorf("Discrepancy in gradient for object %3d in dimension %3d: %3.6f%% Error: h=%e: Analytic=%2.10e; Approximated=%2.10e.\n", o, j, pcerr, h, G[o][j], approx_grad)
 			}
 		}
 	}
