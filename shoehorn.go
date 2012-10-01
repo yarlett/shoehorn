@@ -120,7 +120,8 @@ func (sh *Shoehorn) LearnGradientDescent(step_size float64, alpha float64, l2 fl
 		// Calculate current error.
 		e = sh.CurrentError()
 		// Update positions using gradient descent.
-		sh.GradientDescent(step_size)
+		noise := ParameterSetter(epoch, 0, 1.0, numepochs, 0.0)
+		sh.GradientDescent(step_size, noise)
 		// Calculate average distance from origin.
 		mD = 0.0
 		for o = 0; o < sh.no; o++ {
@@ -453,7 +454,7 @@ func (sh *Shoehorn) CopyGradient() (G [][]float64) {
 
 // Gradient descent methods.
 
-func (sh *Shoehorn) GradientDescent(step_size float64) {
+func (sh *Shoehorn) GradientDescent(step_size float64, noise float64) {
 	var (
 		o, j  int
 		scale float64
@@ -462,6 +463,7 @@ func (sh *Shoehorn) GradientDescent(step_size float64) {
 		scale = step_size / VectorMagnitude(sh.G[o])
 		for j = 0; j < sh.nd; j++ {
 			sh.L[o][j] -= scale * sh.G[o][j]
+			sh.L[o][j] += (rand.NormFloat64() * noise)
 		}
 	}
 	return
