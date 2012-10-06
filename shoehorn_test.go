@@ -9,16 +9,16 @@ import (
 
 // Some general parameters.
 var (
-	NDIMS      int     = 2
-	ALPHA      float64 = 0.01
-	L2         float64 = 1.0
+	NDIMS int     = 2
+	ALPHA float64 = 0.01
+	L2    float64 = 0.5
 )
 
 // Returns a Shoehorn object initialized with some test data.
 func GetTestData(nobjs, nd int) (sh Shoehorn) {
 	var (
-		o, j                      int
-		S                         [][]string
+		o, j int
+		S    [][]string
 	)
 	// Generate random object data.
 	S = make([][]string, 0)
@@ -35,6 +35,7 @@ func GetTestData(nobjs, nd int) (sh Shoehorn) {
 	sh = Shoehorn{}
 	sh.Create(S, nd)
 	sh.NormalizeObjects(1.0)
+	sh.Rescale(5.0)
 	return
 }
 
@@ -61,9 +62,9 @@ func TestReconstructions(t *testing.T) {
 // Checks that the gradient function and its approximation are close to one another.
 func TestGradient(t *testing.T) {
 	var (
-		o, j                        int
+		o, j                           int
 		approx_grad, pcerr, h, Eh, Enh float64
-		G                         [][]float64
+		G                              [][]float64
 		sh                             Shoehorn
 	)
 	// Initialize test data.
@@ -89,7 +90,7 @@ func TestGradient(t *testing.T) {
 			approx_grad = (Eh - Enh) / (2.0 * h)
 			// Compare actual and approximated gradients.
 			pcerr = math.Abs((G[o][j]-approx_grad)/G[o][j]) * 100.0
-			if pcerr > 0.05 {
+			if pcerr > 1e-3 {
 				t.Errorf("Discrepancy in gradient for object %3d in dimension %3d: %3.6f%% Error: h=%e: Analytic=%2.10e; Approximated=%2.10e.\n", o, j, pcerr, h, G[o][j], approx_grad)
 			}
 		}

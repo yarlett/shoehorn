@@ -13,10 +13,10 @@ func main() {
 	sh.NormalizeObjects(2.0)
 	fmt.Printf("Took %v to create data set of %d objects exhibiting %d distinct features.\n", time.Now().Sub(t1), len(sh.O), len(sh.O[0]))
 
-	alpha, l2 := 0.0, 0.001
+	alpha, l2 := 0.0, 0.05
 
 	// Define parameters.
-	sh.LearnGradientDescent(0.01, alpha, l2, 400, "tmp/locations1")
-	// sh.Rescale(1.0)
-	// sh.LearnLineSearch(alpha, l2, 30, "tmp/locations2")
+	sh.Rescale(1e-3)
+	sh.LearnGradientDescent(1e-2, alpha, l2, 1000, "tmp/locations1")
+	//sh.LearnLineSearch(alpha, l2, 30, "tmp/locations2")
 }
