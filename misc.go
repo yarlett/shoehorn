@@ -65,10 +65,21 @@ func VectorMagnitude(V []float64) (mag float64) {
 	return
 }
 
-func ReturnMatrix(i, j int) (M [][]float64) {
+func MeanMagnitude(M [][]float64) (magnitude float64) {
+	for i := 0; i < len(M); i++ {
+		magnitude += VectorMagnitude(M[i])
+	}
+	magnitude /= float64(len(M))
+	return
+}
+
+func ReturnMatrix(i, j int, initialval float64) (M [][]float64) {
 	M = make([][]float64, i)
-	for x := 0; x < i; x++ {
-		M[x] = make([]float64, j)
+	for ii := 0; ii < i; ii++ {
+		M[ii] = make([]float64, j)
+		for jj := 0; jj < j; jj++ {
+			M[ii][jj] = initialval
+		}
 	}
 	return
 }

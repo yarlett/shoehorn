@@ -105,17 +105,59 @@ func (sh *Shoehorn) Create(S [][]string, ndims int) {
 // Learn methods. Performs gradient-descent on object locations.
 //
 
-func (sh *Shoehorn) LearnGradientDescent(S float64, alpha float64, l2 float64, numepochs int, output_prefix string) {
+func (sh *Shoehorn) LearnGradientDescent(lr, mom, alpha, l2 float64, numepochs int, output_prefix string) {
 	/*
 		Uses gradient descent to find the best location for objects.
 	*/
 	var (
-		epoch     int
-		E, D float64
-		T, t      time.Time
+		epoch  int
+		E0, E1 float64
+		U      [][]float64
+		T, t   time.Time
+	)
+	U = ReturnMatrix(sh.no, sh.nd, 0)
+	// Initialization.
+	T = time.Now()
+	// Perform learning.
+	E0 = math.MaxFloat64
+	for epoch = 0; epoch < numepochs; epoch++ {
+		t = time.Now()
+		// Get gradient for all objects.
+		sh.SetGradients(alpha, l2)
+		// Calculate current error.
+		E1 = sh.CurrentError()
+		// Update learning rate.
+		if (E1 > E0) && (lr > 1e-10) {
+			lr *= 0.5
+		} else if E1 < E0 {
+			lr *= 1.1
+		}
+		E0 = E1
+		// Update positions using gradient descent.
+		sh.GradientDescent(lr, mom, U)
+		// Report status.
+		fmt.Printf("Epoch %6d: E=%.8e G=%.8e S=%.8e D=%.8e (epoch took %v; %v elapsed).\n", epoch+1, E1, MeanMagnitude(sh.G), lr, MeanMagnitude(sh.L), time.Now().Sub(t), time.Now().Sub(T))
+		// Write position of objects.
+		if output_prefix != "" {
+			sh.WriteLocations(fmt.Sprintf("%v_%v.csv", output_prefix, epoch+1))
+		}
+	}
+}
+
+func (sh *Shoehorn) LearnRprop(initial_step_size float64, alpha float64, l2 float64, numepochs int, output_prefix string) {
+	/*
+		Uses gradient descent to find the best location for objects.
+	*/
+	var (
+		epoch int
+		E     float64
+		S, G  [][]float64
+		T, t  time.Time
 	)
 	// Initialization.
 	T = time.Now()
+	S = ReturnMatrix(sh.no, sh.nd, initial_step_size)
+	G = ReturnMatrix(sh.no, sh.nd, 0.0)
 	// Perform learning.
 	for epoch = 0; epoch < numepochs; epoch++ {
 		t = time.Now()
@@ -123,12 +165,15 @@ func (sh *Shoehorn) LearnGradientDescent(S float64, alpha float64, l2 float64, n
 		sh.SetGradients(alpha, l2)
 		// Calculate current error.
 		E = sh.CurrentError()
-		// Compute mean distance from origin.
-		_, D, _ = sh.DistanceInformation()
 		// Update positions using gradient descent.
-		sh.GradientDescent(S)
+		S = sh.Rprop(S, G, sh.G, 1e-4, 1e-1)
+		for o := 0; o < sh.no; o++ {
+			for j := 0; j < sh.nd; j++ {
+				G[o][j] = sh.G[o][j]
+			}
+		}
 		// Report status.
-		fmt.Printf("Epoch %6d: E=%.8e S=%.8e D=%.8e (epoch took %v; %v elapsed).\n", epoch+1, E, S, D, time.Now().Sub(t), time.Now().Sub(T))
+		fmt.Printf("Epoch %6d: E=%.8e G=%.8e S=%.8e D=%.8e (epoch took %v; %v elapsed).\n", epoch+1, E, MeanMagnitude(sh.G), MeanMagnitude(S), MeanMagnitude(sh.L), time.Now().Sub(t), time.Now().Sub(T))
 		// Write position of objects.
 		if output_prefix != "" {
 			sh.WriteLocations(fmt.Sprintf("%v_%v.csv", output_prefix, epoch+1))
@@ -335,7 +380,7 @@ func (sh *Shoehorn) CurrentError() (E float64) {
 // Gradient methods.
 //
 
-func (sh *Shoehorn) SetGradients(alpha float64, l2 float64) {
+func (sh *Shoehorn) SetGradients(alpha, l2 float64) {
 	var (
 		o       int
 		channel chan bool
@@ -356,9 +401,9 @@ func (sh *Shoehorn) SetGradients(alpha float64, l2 float64) {
 	return
 }
 
-func (sh *Shoehorn) Gradient(object int, alpha float64, l2 float64, channel chan bool) {
+func (sh *Shoehorn) Gradient(object int, alpha, l2 float64, channel chan bool) {
 	var (
-		o, j, f                int
+		o, j, f                   int
 		E, p, q, tmp1, tmp2, tmp3 float64
 		G, T1, T2                 []float64
 	)
@@ -438,13 +483,16 @@ func (sh *Shoehorn) CopyGradient() (G [][]float64) {
 
 // Gradient descent methods.
 
-func (sh *Shoehorn) GradientDescent(step_size float64) {
+func (sh *Shoehorn) GradientDescent(learning_rate, momentum float64, U [][]float64) {
 	var (
-		o, j  int
+		o, j int
+		u float64
 	)
 	for o = 0; o < sh.no; o++ {
 		for j = 0; j < sh.nd; j++ {
-			sh.L[o][j] -= sh.G[o][j]
+			u = (learning_rate * -sh.G[o][j]) + (momentum * U[o][j])
+			sh.L[o][j] += u
+			U[o][j] = u
 		}
 	}
 	return
@@ -452,28 +500,24 @@ func (sh *Shoehorn) GradientDescent(step_size float64) {
 
 func (sh *Shoehorn) Rprop(S [][]float64, G0 [][]float64, G1 [][]float64, step_size_min float64, step_size_max float64) [][]float64 {
 	var (
-		o, j                       int
-		gradient_product, inc, dec float64
+		o, j  int
+		gprod float64
 	)
-	inc = 1.01
-	dec = 0.5
 	for o = 0; o < len(G1); o++ {
-		for j = 0; j < sh.nd; j++ {
-			if G0 != nil {
-				// Update the step size (consistent gradient directions get a boost, inconsistent directions get reduced).
-				gradient_product = G0[o][j] * G1[o][j]
-				if gradient_product > 0.0 {
-					S[o][j] *= inc
-				} else if gradient_product < 0.0 {
-					S[o][j] *= dec
-				}
-				// Apply caps.
-				if S[o][j] < step_size_min {
-					S[o][j] = step_size_min
-				}
-				if S[o][j] > step_size_max {
-					S[o][j] = step_size_max
-				}
+		for j = 0; j < len(G1[o]); j++ {
+			// Update the step size (consistent gradient directions get a boost, inconsistent directions get reduced).
+			gprod = G0[o][j] * G1[o][j]
+			if gprod > 0.0 {
+				S[o][j] *= 1.01
+			} else if gprod < 0.0 {
+				S[o][j] *= 0.5
+			}
+			// Apply caps.
+			if S[o][j] < step_size_min {
+				S[o][j] = step_size_min
+			}
+			if S[o][j] > step_size_max {
+				S[o][j] = step_size_max
 			}
 			// Update the position based on the sign of its magnitude and the learned step size (RProp doesn't use gradient magnitudes).
 			sh.L[o][j] -= math.Copysign(S[o][j], G1[o][j])
