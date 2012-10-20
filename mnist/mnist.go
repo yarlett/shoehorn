@@ -14,5 +14,5 @@ func main() {
 	fmt.Printf("Took %v to create data set of %d objects exhibiting %d distinct features.\n", time.Now().Sub(t1), len(sh.O), len(sh.O[0]))
 
 	// Perform simulated annealing learning.
-	sh.Annealing(0.1, 25, 1000, 1e-2, "tmp/locations")
+	sh.Annealing(1e-1, 1e-6, 10, 1000, 0.1, 2e-2, "tmp/locations")
 }

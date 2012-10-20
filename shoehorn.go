@@ -305,7 +305,7 @@ func (sh *Shoehorn) QuickError(object int, l2 float64) (e float64) {
 	var (
 		o, j, f int
 		d, w, q float64
-		Q []float64
+		Q       []float64
 	)
 	// Get reconstruction vector.
 	Q = make([]float64, sh.nf)
