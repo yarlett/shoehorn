@@ -7,18 +7,13 @@ import (
 	"time"
 )
 
-func (sh *Shoehorn) Annealing(temp0, temp1 float64, num_temps, its_at_temp int, sigma, l2 float64, output_prefix string) {
+func (sh *Shoehorn) Annealing(temp0, temp1 float64, num_temps, its_at_temp int, sigma float64, output_prefix string) {
 	var (
-		o, d, t, it              int
-		e, E                     float64
-		location, errs, A, temps []float64
-		tm                       time.Time
+		o, d, t, it        int
+		e1, e2, E          float64
+		location, A, temps []float64
+		tm                 time.Time
 	)
-	// Initialize current errors of objects.
-	errs = make([]float64, sh.no)
-	for o = 0; o < sh.no; o++ {
-		errs[o] = sh.EnergyAt(o, l2, sh.L[o])
-	}
 	// Get temperature schedule.
 	temps = sh.GetTemperatureSchedule(temp0, temp1, num_temps)
 	// Perform number of required epochs of learning.
@@ -28,19 +23,20 @@ func (sh *Shoehorn) Annealing(temp0, temp1 float64, num_temps, its_at_temp int, 
 			tm, E, A = time.Now(), 0.0, make([]float64, 2)
 			// Decide whether to move each object to a new location.
 			for o = 0; o < sh.no; o++ {
-				// Generate the new location.
-				location = sh.Candidate(o, sigma)
+				// Get the current error (cannot cache error from last epoch as other objects will have relocated).
+				e1 = sh.EnergyAt(o, sh.L[o])
 				// Get the error at the new location.
-				e = sh.EnergyAt(o, l2, location)
+				location = sh.Candidate(o, sigma)
+				e2 = sh.EnergyAt(o, location)
 				// Decide whether to accept the new position.
-				if rand.Float64() < math.Exp((errs[o]-e)/temps[t]) {
+				if rand.Float64() < math.Exp((e1-e2)/temps[t]) {
 					for d = 0; d < sh.nd; d++ {
 						sh.L[o][d] = location[d]
 					}
-					errs[o] = e
+					e1 = e2
 					A[0] += 1.0
 				}
-				E += errs[o]
+				E += e1
 				A[1] += 1.0
 			}
 			E /= float64(sh.no)
@@ -95,16 +91,17 @@ func (sh *Shoehorn) ReconstructionAt(object int, location []float64) (R []float6
 
 func (sh *Shoehorn) Candidate(object int, sigma float64) (location []float64) {
 	var (
-		d int
+		d, o int
 	)
 	location = make([]float64, sh.nd)
+	o = rand.Intn(sh.no)
 	for d = 0; d < sh.nd; d++ {
-		location[d] = sh.L[object][d] + (sigma * rand.NormFloat64())
+		location[d] = sh.L[o][d] + (sigma * rand.NormFloat64())
 	}
 	return
 }
 
-func (sh *Shoehorn) EnergyAt(object int, l2 float64, location []float64) (energy float64) {
+func (sh *Shoehorn) EnergyAt(object int, location []float64) (energy float64) {
 	/*
 		Returns the energy of an object when located in a particular position.
 	*/
@@ -124,6 +121,5 @@ func (sh *Shoehorn) EnergyAt(object int, l2 float64, location []float64) (energy
 	for f = 0; f < sh.nf; f++ {
 		energy += math.Pow((R[f]/mg)-sh.O[object][f], 2.)
 	}
-	energy += l2 * VectorMagnitude(location)
 	return
 }
