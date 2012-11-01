@@ -61,6 +61,10 @@ func (sh *Shoehorn) Annealing(temp_initial, temp_final, temp_decay, equilibrium_
 		// Report status.
 		fmt.Printf("Epoch %d: Error=%.6e Temp=%.6e Equilibrium=%.6e (took %v).\n", t, error, temp, equilibrium, time.Now().Sub(tm))
 	}
+	// Write locations to file before exiting.
+	if output_prefix != "" {
+		sh.WriteLocations(fmt.Sprintf("%v_%v.csv", output_prefix, t))
+	}
 }
 
 func (sh *Shoehorn) ReconstructionAt(object int, location []float64) (R []float64, W float64) {
