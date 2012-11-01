@@ -4,114 +4,66 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"sort"
 	"time"
 )
 
-func (sh *Shoehorn) Annealing(percentile0, percentile1 float64, num_percentiles, its_at_temp int, output_prefix string) {
+func (sh *Shoehorn) Annealing(temp_initial, temp_final, temp_decay, equilibrium_threshold float64, output_prefix string) {
 	var (
-		o, d, t, it                       int
-		sigma, e_cur, e_try, E, p      float64
-		location, A, temps, energy_increases []float64
-		wormhole                             bool
-		tm                                   time.Time
+		t, o, d                                int
+		temp, error, e_cur, e_try, equilibrium float64
+		location, errors                       []float64
+		candidate_function                     func(int, *Shoehorn) []float64
+		energy_function                        func(int, []float64, *Shoehorn) (e float64)
+		tm                                     time.Time
 	)
-	// Set parameters for generation of candidate locations.
-	wormhole = true
-	sigma = 1.
-	// Generate a sample of energy increases to get a sense of their distribution.
-	energy_increases = make([]float64, 0)
-	for len(energy_increases) < 10000 {
-		o = rand.Intn(sh.no)
-		e_cur = sh.EnergyAt(o, sh.L[o])
-		location = sh.Candidate(o, wormhole, sigma)
-		e_try = sh.EnergyAt(o, location)
-		if e_try > e_cur {
-			energy_increases = append(energy_increases, e_try-e_cur)
-		}
-	}
-	// Get temperature schedule based on the distribution of .
-	temps = make([]float64, 0)
-	for _, p = range sh.GetPercentileSchedule(percentile0, percentile1, num_percentiles) {
-		if p == 0.0 {
-			temps = append(temps, math.SmallestNonzeroFloat64)
-		} else {
-			temps = append(temps, Quantile(energy_increases, p))
-		}
-	}
-	energy_increases = nil
-	// Perform number of required epochs of learning.
-	for t = 0; t < len(temps); t++ {
-		// Perform required number of iterations at the current temperature.
-		for it = 0; it < its_at_temp; it++ {
-			tm, E, A = time.Now(), 0., make([]float64, 2)
-			// Decide whether to move each object to a new location.
-			for o = 0; o < sh.no; o++ {
-				// Get the current error (cannot cache error from last epoch as other objects will have relocated).
-				e_cur = sh.EnergyAt(o, sh.L[o])
-				// Get the error at the new location.
-				location = sh.Candidate(o, wormhole, sigma)
-				e_try = sh.EnergyAt(o, location)
-				// Decide whether to accept the new position.
-				if e_try < e_cur || rand.Float64() < math.Exp((e_cur-e_try)/temps[t]) {
-					for d = 0; d < sh.nd; d++ {
-						sh.L[o][d] = location[d]
-					}
-					e_cur = e_try
-					A[0] += 1.0
+	// Set candidate and energy functions.
+	candidate_function = CandidateWormhole
+	energy_function = EnergyAtKL
+	sh.NormalizeObjects(1.)
+	// Perform simulated annealing.
+	errors = make([]float64, 0)
+	for t, temp = 0, temp_initial; temp > temp_final; t++ {
+		// Iterate through objects.
+		tm = time.Now()
+		for o, error = 0, 0.; o < sh.no; o++ {
+			// Calculate current and try errors.
+			e_cur = energy_function(o, sh.L[o], sh)
+			location = candidate_function(o, sh)
+			e_try = energy_function(o, location, sh)
+			// Decide whether to accept the new position or not.
+			if e_try < e_cur || rand.Float64() < math.Exp((e_cur-e_try)/temp) {
+				for d = 0; d < sh.nd; d++ {
+					sh.L[o][d] = location[d]
 				}
-				E += e_cur
-				A[1] += 1.0
+				error += e_try
+			} else {
+				error += e_cur
 			}
-			E /= float64(sh.no)
-			// Report on performance of epoch.
-			fmt.Printf("Epoch %d/%d It=%d/%d: E=%.6e T=%.6e P(Acc)=%.6e (took %v).\n", t+1, len(temps), it+1, its_at_temp, E, temps[t], A[0]/A[1], time.Now().Sub(tm))
 		}
-		// Write locations to file.
-		if output_prefix != "" {
-			sh.WriteLocations(fmt.Sprintf("%v_%v.csv", output_prefix, t))
+		error = error / float64(sh.no)
+		errors = append(errors, error)
+		if len(errors) > 1000 {
+			errors = errors[len(errors)-1000:]
 		}
-	}
-}
-
-func Quantile(data []float64, percentile float64) (quantile float64) {
-	// Otherwise return the empirical quantile for the specified percentile.
-	sort.Float64s(data)
-	ix := int(percentile * float64(len(data)))
-	if ix < 0 {
-		ix = 0
-	}
-	if ix > len(data)-1 {
-		ix = len(data) - 1
-	}
-	return data[ix]
-}
-
-func (sh *Shoehorn) GetPercentileSchedule(percentile0, percentile1 float64, num_percentiles int) (percentiles []float64) {
-	var i int
-	var alpha float64 = (percentile0 - percentile1) / float64(num_percentiles-1)
-	for i = 0; i < num_percentiles; i++ {
-		percentiles = append(percentiles, percentile0-float64(i)*alpha)
-	}
-	return
-}
-
-func (sh *Shoehorn) GetTemperatureSchedule(temp0, temp1 float64, num_temps int) (temps []float64) {
-	var i int
-	var alpha float64
-	alpha = math.Pow(temp1/temp0, 1./float64(num_temps-2))
-	temps = make([]float64, num_temps)
-	for i = 0; i < num_temps; i++ {
-		if i == num_temps-1 {
-			temps[i] = math.SmallestNonzeroFloat64
-		} else {
-			temps[i] = temp0 * math.Pow(alpha, float64(i))
+		// Compute thermal equilibrium measure.
+		equilibrium = ThermalEquilibrium(errors)
+		// Perform equilibrium actions.
+		if equilibrium < equilibrium_threshold {
+			// Reduce temperature.
+			temp *= temp_decay
+			// Reset errors.
+			errors = make([]float64, 0)
+			// Write locations to file.
+			if output_prefix != "" {
+				sh.WriteLocations(fmt.Sprintf("%v_%v.csv", output_prefix, t))
+			}
 		}
+		// Report status.
+		fmt.Printf("Epoch %d: Error=%.6e Temp=%.6e Equilibrium=%.6e (took %v).\n", t, error, temp, equilibrium, time.Now().Sub(tm))
 	}
-	return
 }
 
-func (sh *Shoehorn) ReconstructionAt(object int, location []float64) (R []float64) {
+func (sh *Shoehorn) ReconstructionAt(object int, location []float64) (R []float64, W float64) {
 	var (
 		o, d, f int
 		w       float64
@@ -121,11 +73,12 @@ func (sh *Shoehorn) ReconstructionAt(object int, location []float64) (R []float6
 	for o = 0; o < sh.no; o++ {
 		if o != object {
 			// Calculate weight.
-			w = 0.0
+			w = 0.
 			for d = 0; d < sh.nd; d++ {
-				w += math.Pow(location[d]-sh.L[o][d], 2.0)
+				w += math.Pow(location[d]-sh.L[o][d], 2.)
 			}
 			w = math.Exp(-math.Sqrt(w))
+			W += w
 			// Accumulate neighbor's distributional information.
 			for f = 0; f < sh.nf; f++ {
 				R[f] += w * sh.O[o][f]
@@ -135,25 +88,33 @@ func (sh *Shoehorn) ReconstructionAt(object int, location []float64) (R []float6
 	return
 }
 
-func (sh *Shoehorn) Candidate(object int, wormhole bool, sigma float64) (location []float64) {
-	var (
-		d, target_object int
-	)
+// Candidate functions.
+
+func Candidate(object int, sh *Shoehorn) (location []float64) {
 	location = make([]float64, sh.nd)
-	if wormhole {
-		target_object = rand.Intn(sh.no)
-	} else {
-		target_object = object
-	}
-	for d = 0; d < sh.nd; d++ {
-		location[d] = sh.L[target_object][d] + (sigma * rand.NormFloat64())
+	for d := 0; d < sh.nd; d++ {
+		location[d] = sh.L[object][d] + (1. * rand.NormFloat64())
 	}
 	return
 }
 
-func (sh *Shoehorn) EnergyAt(object int, location []float64) (energy float64) {
+func CandidateWormhole(object int, sh *Shoehorn) (location []float64) {
+	var (
+		d, target_object int
+	)
+	location = make([]float64, sh.nd)
+	target_object = rand.Intn(sh.no)
+	for d = 0; d < sh.nd; d++ {
+		location[d] = sh.L[target_object][d] + (1. * rand.NormFloat64())
+	}
+	return
+}
+
+// Energy functions.
+
+func EnergyAtSumSquared(object int, location []float64, sh *Shoehorn) (energy float64) {
 	/*
-		Returns the energy of an object when located in a particular position.
+		Returns the energy of an object when located in a particular position based on squared error function.
 	*/
 	var (
 		f  int
@@ -161,7 +122,7 @@ func (sh *Shoehorn) EnergyAt(object int, location []float64) (energy float64) {
 		R  []float64
 	)
 	// Get reconstruction.
-	R = sh.ReconstructionAt(object, location)
+	R, _ = sh.ReconstructionAt(object, location)
 	// Get magnitude of reconstruction.
 	for f = 0; f < sh.nf; f++ {
 		mg += R[f] * R[f]
@@ -171,5 +132,84 @@ func (sh *Shoehorn) EnergyAt(object int, location []float64) (energy float64) {
 	for f = 0; f < sh.nf; f++ {
 		energy += math.Pow((R[f]/mg)-sh.O[object][f], 2.)
 	}
+	return
+}
+
+func EnergyAtKL(object int, location []float64, sh *Shoehorn) (energy float64) {
+	/*
+		Returns the energy of an object when located in a particular position based on Kullback-Leibler divergence.
+	*/
+	var (
+		f, d    int
+		W, p, q float64
+		R       []float64
+	)
+	// Get reconstruction.
+	R, W = sh.ReconstructionAt(object, location)
+	// Energy is sum of squared error.
+	for f = 0; f < sh.nf; f++ {
+		p = sh.O[object][f]
+		if p > 0. {
+			q = (0.99 * (R[f] / W)) + (0.01 * p)
+			energy += p * (math.Log(p) - math.Log(q))
+		}
+	}
+	// Add L2 punishment.
+	for d = 0; d < sh.nd; d++ {
+		energy += 0.001 * location[d] * location[d]
+	}
+	return
+}
+
+// Thermal equilibrium detector.
+
+func ThermalEquilibrium(E []float64) (equilibrium float64) {
+	var (
+		i                          int
+		c0, e0, l0, c1, m1, e1, l1 float64
+	)
+	// Estimate intercept of null model.
+	for i = 0; i < len(E); i++ {
+		c0 += E[i]
+	}
+	c0 /= float64(len(E))
+	// Estimate error under null model.
+	for i = 0; i < len(E); i++ {
+		e0 += math.Pow(E[i]-c0, 2.)
+	}
+	e0 = math.Sqrt(e0 / float64(len(E)))
+	// Get log likelihood under null model.
+	for i = 0; i < len(E); i++ {
+		l0 += NormalLogPdf(E[i], c0, e0)
+	}
+	// Get means of data.
+	mx := float64(len(E)) / 2.
+	my := c0
+	// Estimate gradient of positive model.
+	top, bot := 0., 0.
+	for i = 0; i < len(E); i++ {
+		top += (float64(i) - mx) * (E[i] - my)
+		bot += math.Pow(float64(i)-mx, 2.)
+	}
+	m1 = top / bot
+	// Estimate intercept of positive model.
+	c1 = my - m1*mx
+	// Estimate error under positive model.
+	for i = 0; i < len(E); i++ {
+		e1 += math.Pow(E[i]-(c1+m1*float64(i)), 2.)
+	}
+	e1 = math.Sqrt(e1 / float64(len(E)))
+	// Get log likelihood under positive model.
+	for i = 0; i < len(E); i++ {
+		l1 += NormalLogPdf(E[i], c1+m1*float64(i), e1)
+	}
+	// Return equilibrium measure.
+	equilibrium = l1 / l0
+	return
+}
+
+func NormalLogPdf(x, m, s float64) (l float64) {
+	var v float64 = s * s
+	l = -math.Log(math.Sqrt(2.*math.Pi*v)) - (math.Pow(x-m, 2.) / (2. * v))
 	return
 }

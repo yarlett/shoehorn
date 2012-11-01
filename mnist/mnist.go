@@ -10,10 +10,8 @@ func main() {
 	// Load MNIST data.
 	t1 := time.Now()
 	sh := shoehorn.NewShoehorn("../data/mnist_data_train.csv", 2, 0.005)
-	sh.NormalizeObjects(2.0)
 	fmt.Printf("Took %v to create data set of %d objects exhibiting %d distinct features.\n", time.Now().Sub(t1), len(sh.O), len(sh.O[0]))
 
 	// Perform simulated annealing learning.
-	sh.Rescale(5.)
-	sh.Annealing(1., 0., 15, 500, "tmp/locations")
+	sh.Annealing(.05, .001, .9, 1.01, "tmp/locations")
 }

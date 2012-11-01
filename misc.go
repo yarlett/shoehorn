@@ -2,6 +2,7 @@ package shoehorn
 
 import (
 	"math"
+	"sort"
 )
 
 //
@@ -51,6 +52,54 @@ func ParameterSetter(current_epoch int, epoch0 int, val0 float64, epoch1 int, va
 		parameter = val0 * math.Pow(multiplier, float64(current_epoch-epoch0))
 	case current_epoch >= epoch1:
 		parameter = val1
+	}
+	return
+}
+
+// Scheduling functions (e.g. for temperatures in simulated annealing).
+
+func GetLinearSchedule(value0, value1 float64, num_values int) (values []float64) {
+	var i int
+	var alpha float64 = (value0 - value1) / float64(num_values-1)
+	for i = 0; i < num_values; i++ {
+		values = append(values, value0-float64(i)*alpha)
+	}
+	return
+}
+
+func GetExponentialSchedule(value0, value1 float64, num_values int) (values []float64) {
+	var i int
+	var alpha float64
+	alpha = math.Pow(value1/value0, 1./float64(num_values-1))
+	for i = 0; i < num_values; i++ {
+		values = append(values, value0*math.Pow(alpha, float64(i)))
+	}
+	return
+}
+
+// Quantile function. Returns quantile sample of values for a given percentile.
+
+func Quantile(data []float64, percentile float64) (quantile float64) {
+	// Ensure the data is sorted.
+	sort.Float64s(data)
+	// Ensure the percentile is within acceptable range.
+	if percentile < 0. {
+		percentile = 0.
+	}
+	if percentile > 1. {
+		percentile = 1.
+	}
+	// Get the integer and remainder parts of the index.
+	ix_all := percentile * float64(len(data)-1)
+	ix_int := int(math.Floor(ix_all))
+	ix_rem := ix_all - float64(ix_int)
+	// Set quantile, applying linear interpolation if possible.
+	if ix_int <= 0 {
+		quantile = data[0]
+	} else if ix_int >= len(data)-1 {
+		quantile = data[len(data)-1]
+	} else {
+		quantile = data[ix_int] + (ix_rem * (data[ix_int-1] - data[ix_int]))
 	}
 	return
 }
