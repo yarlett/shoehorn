@@ -42,8 +42,8 @@ func (sh *Shoehorn) Annealing(temp_initial, temp_final, temp_decay, equilibrium_
 		}
 		error = error / float64(sh.no)
 		errors = append(errors, error)
-		if len(errors) > 1000 {
-			errors = errors[len(errors)-1000:]
+		if len(errors) > 10000 {
+			errors = errors[len(errors)-10000:]
 		}
 		// Compute thermal equilibrium measure.
 		equilibrium = ThermalEquilibrium(errors)
