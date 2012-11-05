@@ -17,7 +17,7 @@ func (sh *Shoehorn) Annealing(temp_initial, temp_final, temp_decay, equilibrium_
 		tm                                     time.Time
 	)
 	// Set candidate and energy functions.
-	candidate_function = CandidateWormhole
+	candidate_function = CandidateHybrid
 	energy_function = EnergyAtKL
 	sh.NormalizeObjects(1.)
 	// Perform simulated annealing.
@@ -31,7 +31,7 @@ func (sh *Shoehorn) Annealing(temp_initial, temp_final, temp_decay, equilibrium_
 			location = candidate_function(o, sh)
 			e_try = energy_function(o, location, sh)
 			// Decide whether to accept the new position or not.
-			if e_try < e_cur || rand.Float64() < math.Exp((e_cur-e_try)/temp) {
+			if rand.Float64() < math.Exp(-(e_try-e_cur)/temp) {
 				for d = 0; d < sh.nd; d++ {
 					sh.L[o][d] = location[d]
 				}
@@ -42,8 +42,8 @@ func (sh *Shoehorn) Annealing(temp_initial, temp_final, temp_decay, equilibrium_
 		}
 		error = error / float64(sh.no)
 		errors = append(errors, error)
-		if len(errors) > 10000 {
-			errors = errors[len(errors)-10000:]
+		if len(errors) > 500 {
+			errors = errors[len(errors)-500:]
 		}
 		// Compute thermal equilibrium measure.
 		equilibrium = ThermalEquilibrium(errors)
@@ -114,11 +114,53 @@ func CandidateWormhole(object int, sh *Shoehorn) (location []float64) {
 	return
 }
 
+func CandidateHybrid(object int, sh *Shoehorn) (location []float64) {
+	var (
+		d, o int
+	)
+	location = make([]float64, sh.nd)
+	// Generate a local candidate position 90% of the time.
+	if rand.Float64() < .9 {
+		for d = 0; d < sh.nd; d++ {
+			location[d] = sh.L[object][d] + (1. * rand.NormFloat64())
+		}
+	// 10% of the time generate a wormhole candidate position.
+	} else {
+		o = rand.Intn(sh.no)
+		for d = 0; d < sh.nd; d++ {
+			location[d] = sh.L[o][d] + (1. * rand.NormFloat64())
+		}
+	}
+	return
+}
+
 // Energy functions.
 
-func EnergyAtSumSquared(object int, location []float64, sh *Shoehorn) (energy float64) {
+func EnergyAtKL(object int, location []float64, sh *Shoehorn) (energy float64) {
 	/*
-		Returns the energy of an object when located in a particular position based on squared error function.
+		Returns the energy of an object when located in a particular position based on Kullback-Leibler divergence.
+	*/
+	var (
+		f       int
+		W, p, q float64
+		R       []float64
+	)
+	// Get reconstruction.
+	R, W = sh.ReconstructionAt(object, location)
+	// Energy is sum of squared error.
+	for f = 0; f < sh.nf; f++ {
+		p = sh.O[object][f]
+		if p > 0. {
+			q = (0.999 * (R[f] / W)) + (0.001 * p)
+			energy += p * (math.Log(p) - math.Log(q))
+		}
+	}
+	return
+}
+
+func EnergyAtSSE(object int, location []float64, sh *Shoehorn) (energy float64) {
+	/*
+		Returns the energy of an object when located in a particular position based on sum squared error function.
 	*/
 	var (
 		f  int
@@ -139,76 +181,49 @@ func EnergyAtSumSquared(object int, location []float64, sh *Shoehorn) (energy fl
 	return
 }
 
-func EnergyAtKL(object int, location []float64, sh *Shoehorn) (energy float64) {
-	/*
-		Returns the energy of an object when located in a particular position based on Kullback-Leibler divergence.
-	*/
-	var (
-		f, d    int
-		W, p, q float64
-		R       []float64
-	)
-	// Get reconstruction.
-	R, W = sh.ReconstructionAt(object, location)
-	// Energy is sum of squared error.
-	for f = 0; f < sh.nf; f++ {
-		p = sh.O[object][f]
-		if p > 0. {
-			q = (0.99 * (R[f] / W)) + (0.01 * p)
-			energy += p * (math.Log(p) - math.Log(q))
-		}
-	}
-	// Add L2 punishment.
-	for d = 0; d < sh.nd; d++ {
-		energy += 0.001 * location[d] * location[d]
-	}
-	return
-}
-
 // Thermal equilibrium detector.
 
-func ThermalEquilibrium(E []float64) (equilibrium float64) {
+func ThermalEquilibrium(errors []float64) (equilibrium float64) {
 	var (
-		i                          int
-		c0, e0, l0, c1, m1, e1, l1 float64
+		i, n                               int
+		mx, my, c0, c1, m1, e0, e1, l0, l1 float64
 	)
-	// Estimate intercept of null model.
-	for i = 0; i < len(E); i++ {
-		c0 += E[i]
+	n = len(errors)
+	// Don't attempt to estimate equilibrium until enough data has been attained.
+	if n < 50 {
+		return math.NaN()
 	}
-	c0 /= float64(len(E))
-	// Estimate error under null model.
-	for i = 0; i < len(E); i++ {
-		e0 += math.Pow(E[i]-c0, 2.)
+	// Compute statistics.
+	for i = 0; i < n; i++ {
+		mx += float64(i)
+		my += errors[i]
 	}
-	e0 = math.Sqrt(e0 / float64(len(E)))
-	// Get log likelihood under null model.
-	for i = 0; i < len(E); i++ {
-		l0 += NormalLogPdf(E[i], c0, e0)
-	}
-	// Get means of data.
-	mx := float64(len(E)) / 2.
-	my := c0
-	// Estimate gradient of positive model.
+	mx /= float64(n)
+	my /= float64(n)
+	// Get parameter for null model.
+	c0 = my
+	// Get parameters for gradient model.
 	top, bot := 0., 0.
-	for i = 0; i < len(E); i++ {
-		top += (float64(i) - mx) * (E[i] - my)
+	for i = 0; i < n; i++ {
+		top += (float64(i) - mx) * (errors[i] - my)
 		bot += math.Pow(float64(i)-mx, 2.)
 	}
 	m1 = top / bot
-	// Estimate intercept of positive model.
-	c1 = my - m1*mx
-	// Estimate error under positive model.
-	for i = 0; i < len(E); i++ {
-		e1 += math.Pow(E[i]-(c1+m1*float64(i)), 2.)
+	c1 = my - (m1 * mx)
+	// Estimate errors.
+	for i = 0; i < n; i++ {
+		e0 += math.Pow(errors[i]-c0, 2.)
+		e1 += math.Pow(errors[i]-(c1 + m1*float64(i)), 2.)
 	}
-	e1 = math.Sqrt(e1 / float64(len(E)))
-	// Get log likelihood under positive model.
-	for i = 0; i < len(E); i++ {
-		l1 += NormalLogPdf(E[i], c1+m1*float64(i), e1)
+	e0 = math.Sqrt(e0)
+	e1 = math.Sqrt(e1)
+	// Get log likelihood under models.
+	for i = 0; i < n; i++ {
+		l0 += NormalLogPdf(errors[i], c0, e0)
+		l1 += NormalLogPdf(errors[i], c1+m1*float64(i), e1)
 	}
 	// Return equilibrium measure.
-	equilibrium = l1 / l0
+	equilibrium = l1 - l0
 	return
 }
 
