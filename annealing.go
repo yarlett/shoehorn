@@ -114,26 +114,6 @@ func CandidateWormhole(object int, sh *Shoehorn) (location []float64) {
 	return
 }
 
-func CandidateHybrid(object int, sh *Shoehorn) (location []float64) {
-	var (
-		d, o int
-	)
-	location = make([]float64, sh.nd)
-	// Generate a local candidate position 90% of the time.
-	if rand.Float64() < .9 {
-		for d = 0; d < sh.nd; d++ {
-			location[d] = sh.L[object][d] + (1. * rand.NormFloat64())
-		}
-	// 10% of the time generate a wormhole candidate position.
-	} else {
-		o = rand.Intn(sh.no)
-		for d = 0; d < sh.nd; d++ {
-			location[d] = sh.L[o][d] + (1. * rand.NormFloat64())
-		}
-	}
-	return
-}
-
 // Energy functions.
 
 func EnergyAtKL(object int, location []float64, sh *Shoehorn) (energy float64) {
@@ -213,7 +193,7 @@ func ThermalEquilibrium(errors []float64) (equilibrium float64) {
 	// Estimate errors.
 	for i = 0; i < n; i++ {
 		e0 += math.Pow(errors[i]-c0, 2.)
-		e1 += math.Pow(errors[i]-(c1 + m1*float64(i)), 2.)
+		e1 += math.Pow(errors[i]-(c1+m1*float64(i)), 2.)
 	}
 	e0 = math.Sqrt(e0)
 	e1 = math.Sqrt(e1)
