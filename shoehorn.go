@@ -407,7 +407,7 @@ func (sh *Shoehorn) SetNeighbors() {
 			// Calculate distance and weight.
 			sh.ND[o1][o2] = 0.0
 			for j = 0; j < sh.nd; j++ {
-				sh.ND[o1][o2] += math.Pow(sh.L[o1][j]-sh.L[o2][j], 2.0)
+				sh.ND[o1][o2] += math.Pow(sh.L[o1][j]-sh.L[o2][j], 2.)
 			}
 			sh.ND[o1][o2] = math.Sqrt(sh.ND[o1][o2])
 			sh.NW[o1][o2] = math.Exp(-sh.ND[o1][o2])
@@ -451,9 +451,9 @@ func (sh *Shoehorn) SetReconstruction(object int, channel chan bool) {
 	)
 	// Reset the reconstruction information.
 	for f = 0; f < sh.nf; f++ {
-		sh.WP[object][f] = 0.0
+		sh.WP[object][f] = 0.
 	}
-	sh.W[object] = 0.0
+	sh.W[object] = 0.
 	// Compute the reconstruction information.
 	for o = 0; o < sh.no; o++ {
 		if o != object {
