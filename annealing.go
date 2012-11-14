@@ -12,12 +12,12 @@ func (sh *Shoehorn) Annealing(temp_initial, temp_final, temp_decay, equilibrium_
 		t, o, d                                int
 		temp, error, e_cur, e_try, equilibrium float64
 		location, errors                       []float64
-		candidate_function                     func(int, *Shoehorn) []float64
+		candidate_function                     func(int, float64, *Shoehorn) []float64
 		energy_function                        func(int, []float64, *Shoehorn) (e float64)
 		tm                                     time.Time
 	)
 	// Set candidate and energy functions.
-	candidate_function = CandidateHybrid
+	candidate_function = CandidateAwesome
 	energy_function = EnergyAtKL
 	sh.NormalizeObjects(1.)
 	// Perform simulated annealing.
@@ -28,7 +28,7 @@ func (sh *Shoehorn) Annealing(temp_initial, temp_final, temp_decay, equilibrium_
 		for o, error = 0, 0.; o < sh.no; o++ {
 			// Calculate current and try errors.
 			e_cur = energy_function(o, sh.L[o], sh)
-			location = candidate_function(o, sh)
+			location = candidate_function(o, 1., sh)
 			e_try = energy_function(o, location, sh)
 			// Decide whether to accept the new position or not.
 			if rand.Float64() < math.Exp(-(e_try-e_cur)/temp) {

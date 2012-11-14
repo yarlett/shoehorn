@@ -399,15 +399,15 @@ func (sh *Shoehorn) SimulatedAnnealingInner(search_radius_proportion, alpha, l2 
 
 func (sh *Shoehorn) SetNeighbors() {
 	var (
-		o1, o2, j int
+		o1, o2, d int
 	)
 	// Set neighbor information (capitalizing on symmetry of distances and weights).
 	for o1 = 0; o1 < sh.no; o1++ {
 		for o2 = 0; o2 <= o1; o2++ {
 			// Calculate distance and weight.
-			sh.ND[o1][o2] = 0.0
-			for j = 0; j < sh.nd; j++ {
-				sh.ND[o1][o2] += math.Pow(sh.L[o1][j]-sh.L[o2][j], 2.)
+			sh.ND[o1][o2] = 0.
+			for d = 0; d < sh.nd; d++ {
+				sh.ND[o1][o2] += math.Pow(sh.L[o1][d]-sh.L[o2][d], 2.)
 			}
 			sh.ND[o1][o2] = math.Sqrt(sh.ND[o1][o2])
 			sh.NW[o1][o2] = math.Exp(-sh.ND[o1][o2])
@@ -738,27 +738,27 @@ func (sh *Shoehorn) LimitLocations(radius float64) {
 
 func (sh *Shoehorn) Rescale(radius float64) {
 	var (
-		o, j int
+		o, d int
 	)
 	// Calculate centroid and maximum distance from origin.
 	centroid := make([]float64, sh.nd)
 	max_distance := 0.0
 	for o = 0; o < sh.no; o++ {
-		for j = 0; j < sh.nd; j++ {
-			centroid[j] += sh.L[o][j]
+		for d = 0; d < sh.nd; d++ {
+			centroid[d] += sh.L[o][d]
 		}
 		distance := VectorMagnitude(sh.L[o])
 		if distance > max_distance {
 			max_distance = distance
 		}
 	}
-	for j = 0; j < sh.nd; j++ {
-		centroid[j] /= float64(sh.no)
+	for d = 0; d < sh.nd; d++ {
+		centroid[d] /= float64(sh.no)
 	}
 	// Recenter and rescale each location.
 	for o = 0; o < sh.no; o++ {
-		for j = 0; j < sh.nd; j++ {
-			sh.L[o][j] = (sh.L[o][j] - centroid[j]) * (radius / max_distance)
+		for d = 0; d < sh.nd; d++ {
+			sh.L[o][d] = (sh.L[o][d] - centroid[d]) * (radius / max_distance)
 		}
 	}
 	return
