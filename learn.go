@@ -10,79 +10,134 @@ import (
 
 func (sh *Shoehorn) LearnRepositioning(epochs int, output_prefix string) {
 	var (
-		e, o, f, d         int
-		e0, e1, sigma      float64
-		l0, l1, S          []float64
-		candidate_function func(int, float64, *Shoehorn) []float64
-		energy_function    func([][]float64, []float64, [][]float64) (e float64)
-		accepts            []bool
-		tm                 time.Time
+		epoch  int
+		energy float64
+		TM, tm time.Time
 	)
-	// Initialize.
-	l0 = make([]float64, sh.nd)
-	l1 = make([]float64, sh.nd)
-	accepts = make([]bool, 0)
-	sigma = 5.
-	S = make([]float64, sh.no)
-	for o = 0; o < sh.no; o++ {
-		for f = 0; f < sh.nf; f++ {
-			S[o] += sh.O[o][f]
-		}
-	}
-	// Set candidate and energy functions.
-	candidate_function = CandidateAwesome
-	energy_function = TotalEnergy
-	sh.Rescale(10.)
+	TM = time.Now()
 	// Perform learning.
-	e0 = energy_function(sh.O, S, sh.L)
-	for e = 0; e < epochs; e++ {
+	energy = TotalEnergy(sh.O, sh.L)
+	for epoch = 0; epoch < epochs; epoch++ {
 		tm = time.Now()
-		// Select an object to reposition.
-		o = rand.Intn(sh.no)
-		// Save the current position.
-		for d = 0; d < sh.nd; d++ {
-			l0[d] = sh.L[o][d]
-		}
-		// Generate a new location for o.
-		l1 = candidate_function(o, sigma, sh)
-		// Save the current location and move the object to the new position.
-		for d = 0; d < sh.nd; d++ {
-			l0[d] = sh.L[o][d]
-			sh.L[o][d] = l1[d]
-		}
-		// Calculate the error at the new position.
-		e1 = energy_function(sh.O, S, sh.L)
-		// Update information for next round.
-		if e1 < e0 {
-			e0 = e1
-			accepts = append(accepts, true)
-		} else {
-			for d = 0; d < sh.nd; d++ {
-				sh.L[o][d] = l0[d]
-			}
-			accepts = append(accepts, false)
-		}
-		// Compute rolling accept rate.
-		if len(accepts) > 1000 {
-			accepts = accepts[len(accepts)-1000:]
-		}
-		pacc := 0.
-		for a := 0; a < len(accepts); a++ {
-			if accepts[a] {
-				pacc += 1.
-			}
-		}
-		pacc /= float64(len(accepts))
+		energy = UpdaterGRAD(sh.O, sh.L, energy)
 		// Write locations to file.
 		if output_prefix != "" {
 			sh.WriteLocations(fmt.Sprintf("%v.csv", output_prefix))
 		}
 		// Report status.
-		fmt.Printf("Epoch %d: Error=%.6e P(acc)=%.6e Sigma=%.6e (took %v).\n", e, e0, pacc, sigma, time.Now().Sub(tm))
+		fmt.Printf("Epoch %d: Energy=%.6e (took %v; %v elapsed).\n", epoch, energy, time.Now().Sub(tm), time.Now().Sub(TM))
 	}
 }
 
-func TotalEnergy(O [][]float64, S []float64, L [][]float64) (energy float64) {
+func UpdaterGAT(O, L [][]float64, current_energy float64) (energy float64) {
+	/*
+		Implements a generate-and-test location updater.
+	*/
+	var (
+		o, oo, d, dd int
+		new_energy float64
+		curloc, newloc []float64
+	)
+	// Randomly select an object to update.
+	o = rand.Intn(len(O))
+	// Initialize storage for locations.
+	curloc = make([]float64, len(L[o]))
+	newloc = make([]float64, len(L[o]))
+	// Generate a new location for this object.
+	if rand.Float64() < .8 {
+		dd = rand.Intn(len(L[o]))
+		for d = 0; d < len(L[o]); d++ {
+			curloc[d] = L[o][d]
+			if d == dd {
+				newloc[d] = curloc[d] + (1. * rand.NormFloat64())
+			} else {
+				newloc[d] = curloc[d]
+			}
+		}
+	} else {
+		oo = rand.Intn(len(O))
+		for d = 0; d < len(L[o]); d++ {
+			curloc[d] = L[o][d]
+			newloc[d] = L[oo][d] + (.1 * rand.NormFloat64())
+		}
+	}
+	// Get energy at new location.
+	for d = 0; d < len(L[o]); d++ {
+		L[o][d] = newloc[d]
+	}
+	new_energy = TotalEnergy(O, L)
+	// Decide whether to keep new location.
+	if new_energy < current_energy {
+		energy = new_energy
+	} else {
+		for d = 0; d < len(L[o]); d++ {
+			L[o][d] = curloc[d]
+		}
+		energy = current_energy
+	}
+	return
+}
+
+func UpdaterGRAD(O, L [][]float64, current_energy float64) (new_energy float64) {
+	/*
+		Implements a gradient-based location updater.
+	*/
+	var (
+		o, oo, d, t  int
+		stepsize float64
+		curloc, G []float64
+	)
+	// Randomly select an object to update.
+	o = rand.Intn(len(O))
+	// Initialize.
+	curloc = make([]float64, len(L[o]))
+	for d = 0; d < len(curloc); d++ {
+		curloc[d] = L[o][d]
+	}
+	// Try to wormhole the object on a small number of trials.
+	if rand.Float64() < .1 {
+		oo = rand.Intn(len(O))
+		for d = 0; d < len(L[o]); d++ {
+			L[o][d] = L[oo][d] + (.1 * rand.NormFloat64())
+		}
+		new_energy = TotalEnergy(O, L)
+		if new_energy >= current_energy {
+			for d = 0; d < len(L[o]); d++ {
+				L[o][d] = curloc[d]
+			}
+			new_energy = current_energy			
+		}
+		return
+	}
+	// Estimate the gradient of the error function with respect to the location of this object.
+	G = EstimateGradient(o, O, L, true)
+	// Perform line search.
+	stepsize = 2.
+	for t = 0; t < 10; t++ {
+		// Set location.
+		for d = 0; d < len(L[o]); d++ {
+			L[o][d] = curloc[d] - (stepsize * G[d])
+		}
+		// Get new energy.
+		new_energy = TotalEnergy(O, L)
+		// Decide whether to keep new location.
+		if new_energy < current_energy {
+			break
+		} else {
+			stepsize *= .5
+		}
+	}
+	// Stay at current location if energy hasn't been reduced.
+	if new_energy > current_energy {
+		for d = 0; d < len(L[o]); d++ {
+			L[o][d] = curloc[d]
+		}
+		new_energy = current_energy
+	}
+	return
+}
+
+func TotalEnergy(O [][]float64, L [][]float64) (energy float64) {
 	/*
 		Returns the energy of an ensemble of objects.
 	*/
@@ -91,32 +146,33 @@ func TotalEnergy(O [][]float64, S []float64, L [][]float64) (energy float64) {
 		R [][]float64
 	)
 	// Generate reconstructions.
-	R = SetReconstructions(O, S, L)
+	R = GetReconstructions(O, L)
 	// Compute total energy.
 	for o = 0; o < len(O); o++ {
 		for f = 0; f < len(O[o]); f++ {
-			//energy += math.Pow(O[o][f]-R[o][f], 2.)
-			if O[o][f] > 0. {
-				energy += math.Abs(O[o][f]-R[o][f]) / O[o][f]
-			}
+			energy += math.Pow(O[o][f]-R[o][f], 2.)
 		}
 	}
 	energy /= float64(len(O))
 	return
 }
 
-func SetReconstructions(O [][]float64, S []float64, L [][]float64) (R [][]float64) {
+func GetReconstructions(O [][]float64, L [][]float64) (R [][]float64) {
+	/*
+		Returns the reconstructions for each object in the ensemble.
+	*/
 	var (
 		object  int
 		channel chan bool
 	)
 	// Initialization.
-	runtime.GOMAXPROCS(runtime.NumCPU())
 	channel = make(chan bool, len(O))
 	R = make([][]float64, len(O))
+	// Ensure code runs on multiple cores if available.
+	runtime.GOMAXPROCS(runtime.NumCPU())
 	// Create goroutines to compute reconstruction of each object.
 	for object = 0; object < len(O); object++ {
-		go SetReconstruction(object, O, S, L, R, channel)
+		go GetReconstruction(object, O, L, R, channel)
 	}
 	// Wait for all goroutines to signal completion.
 	for object = 0; object < len(O); object++ {
@@ -125,46 +181,67 @@ func SetReconstructions(O [][]float64, S []float64, L [][]float64) (R [][]float6
 	return
 }
 
-func SetReconstruction(object int, O [][]float64, S []float64, L [][]float64, R [][]float64, channel chan bool) {
+func GetReconstruction(object int, O [][]float64, L [][]float64, R [][]float64, channel chan bool) {
 	/*
 		Sets the reconstruction information for the specified object.
 	*/
 	var (
-		o, d, f             int
-		w, inc, sumr, scale float64
+		no, o, nd, d, nf, f int
+		sumw, w             float64
 	)
-	R[object] = make([]float64, len(O[object]))
+	no = len(O)
+	nd = len(L[object])
+	nf = len(O[object])
+	// Initialize reconstruction information for the object.
+	R[object] = make([]float64, nf)
 	// Compute the reconstruction information.
-	for o = 0; o < len(O); o++ {
+	for o = 0; o < no; o++ {
 		if o != object {
-			// Get weight.
+			// Get weight of o with respect to object.
 			w = 0.
-			for d = 0; d < len(L[object]); d++ {
+			for d = 0; d < nd; d++ {
 				w += math.Pow(L[object][d]-L[o][d], 2.)
 			}
 			w = math.Exp(-math.Sqrt(w))
-			// Accumulate.
-			for f = 0; f < len(O[object]); f++ {
-				inc = w * O[o][f]
-				R[object][f] += inc
-				sumr += inc
+			sumw += w
+			// Add o's contribution to the reconstruction.
+			for f = 0; f < nf; f++ {
+				R[object][f] += w * O[o][f]
 			}
 		}
 	}
-	// Normalize reconstruction (so it has same sum of object data).
-	scale = S[object] / sumr
-	for f = 0; f < len(O[object]); f++ {
-		R[object][f] *= scale
+	// Normalize reconstruction by dividing by the total weight.
+	for f = 0; f < nf; f++ {
+		R[object][f] /= sumw
 	}
 	// Signal completion.
 	channel <- true
 }
 
-func CandidateAwesome(object int, sigma float64, sh *Shoehorn) (location []float64) {
-	location = make([]float64, sh.nd)
-	o := rand.Intn(sh.no)
-	for d := 0; d < sh.nd; d++ {
-		location[d] = sh.L[o][d] + (sigma * rand.NormFloat64())
+func EstimateGradient(object int, O [][]float64, L [][]float64, normalize bool) (G []float64) {
+	/*
+		Returns an empirical estimate of the gradient of the energy with respect to an object's location.
+	*/
+	var (
+		energy0, energy1, shift float64
+	)
+	// Initialize.
+	G = make([]float64, len(L[object]))
+	energy0 = TotalEnergy(O, L)
+	shift = 1e-10
+	// Estimate gradient for each dimension of location.
+	for d := 0; d < len(L[object]); d++ {
+		L[object][d] += shift
+		energy1 = TotalEnergy(O, L)
+		G[d] = (energy1 - energy0) / shift
+		L[object][d] -= shift
+	}
+	// Normalize magnitude of gradient if required.
+	if normalize {
+		mg := VectorMagnitude(G)
+		for d := 0; d < len(G); d++ {
+			G[d] /= mg
+		}
 	}
 	return
 }

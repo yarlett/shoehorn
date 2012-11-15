@@ -114,6 +114,15 @@ func CandidateWormhole(object int, sh *Shoehorn) (location []float64) {
 	return
 }
 
+func CandidateAwesome(object int, sigma float64, sh *Shoehorn) (location []float64) {
+	location = make([]float64, sh.nd)
+	// o := rand.Intn(sh.no)
+	for d := 0; d < sh.nd; d++ {
+		location[d] = sh.L[object][d] + (sigma * rand.NormFloat64())
+	}
+	return
+}
+
 // Energy functions.
 
 func EnergyAtKL(object int, location []float64, sh *Shoehorn) (energy float64) {
