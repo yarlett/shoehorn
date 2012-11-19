@@ -254,10 +254,8 @@ func (sh *Shoehorn) SetNeighbors() {
 				sh.ND[o1][o2] += math.Pow(sh.L[o1][d]-sh.L[o2][d], 2.)
 			}
 			sh.ND[o1][o2] = math.Sqrt(sh.ND[o1][o2])
-
-			// sh.NW[o1][o2] = math.Exp(-sh.ND[o1][o2])
-			sh.NW[o1][o2] = 1. / (1. + sh.ND[o1][o2])
-
+			sh.NW[o1][o2] = math.Exp(-sh.ND[o1][o2])
+			// sh.NW[o1][o2] = 1. / (1. + sh.ND[o1][o2])
 			// Set symmetric values.
 			sh.ND[o2][o1] = sh.ND[o1][o2]
 			sh.NW[o2][o1] = sh.NW[o1][o2]
@@ -411,12 +409,12 @@ func (sh *Shoehorn) Gradient(object int, l2 float64, channel chan bool) {
 		for o = 0; o < sh.no; o++ {
 			if o != object {
 				for d = 0; d < sh.nd; d++ {
-					// // Exp.
-					// gprime[d] += sh.O[o][f] * sh.NW[object][o] * (sh.L[o][d] - sh.L[object][d]) / sh.ND[object][o]
-					// hprime[d] += sh.NW[object][o] * (sh.L[o][d] - sh.L[object][d]) / sh.ND[object][o]
-					// Pow.
-					gprime[d] += sh.O[o][f] * (sh.L[o][d] - sh.L[object][d]) / (sh.ND[object][o] * (1. + sh.ND[object][o]) * (1. + sh.ND[object][o]))
-					hprime[d] += (sh.L[o][d] - sh.L[object][d]) / (sh.ND[object][o] * (1. + sh.ND[object][o]) * (1. + sh.ND[object][o]))
+					// Exp.
+					gprime[d] += sh.O[o][f] * sh.NW[object][o] * (sh.L[o][d] - sh.L[object][d]) / sh.ND[object][o]
+					hprime[d] += sh.NW[object][o] * (sh.L[o][d] - sh.L[object][d]) / sh.ND[object][o]
+					// // Pow.
+					// gprime[d] += sh.O[o][f] * (sh.L[o][d] - sh.L[object][d]) / (sh.ND[object][o] * (1. + sh.ND[object][o]) * (1. + sh.ND[object][o]))
+					// hprime[d] += (sh.L[o][d] - sh.L[object][d]) / (sh.ND[object][o] * (1. + sh.ND[object][o]) * (1. + sh.ND[object][o]))
 				}
 			}
 		}
@@ -435,12 +433,12 @@ func (sh *Shoehorn) Gradient(object int, l2 float64, channel chan bool) {
 				g = sh.WP[o][f]
 				h = sh.W[o]
 				for d = 0; d < sh.nd; d++ {
-					// // Exp.
-					// gprime[d] = sh.O[object][f] * sh.NW[o][object] * (sh.L[o][d] - sh.L[object][d]) / sh.ND[o][object]
-					// hprime[d] = sh.NW[o][object] * (sh.L[o][d] - sh.L[object][d]) / sh.ND[o][object]
-					// Pow.
-					gprime[d] = sh.O[object][f] * (sh.L[o][d] - sh.L[object][d]) / (sh.ND[o][object] * (1. + sh.ND[o][object]) * (1. + sh.ND[o][object]))
-					hprime[d] = (sh.L[o][d] - sh.L[object][d]) / (sh.ND[o][object] * (1. + sh.ND[o][object]) * (1. + sh.ND[o][object]))
+					// Exp.
+					gprime[d] = sh.O[object][f] * sh.NW[o][object] * (sh.L[o][d] - sh.L[object][d]) / sh.ND[o][object]
+					hprime[d] = sh.NW[o][object] * (sh.L[o][d] - sh.L[object][d]) / sh.ND[o][object]
+					// // Pow.
+					// gprime[d] = sh.O[object][f] * (sh.L[o][d] - sh.L[object][d]) / (sh.ND[o][object] * (1. + sh.ND[o][object]) * (1. + sh.ND[o][object]))
+					// hprime[d] = (sh.L[o][d] - sh.L[object][d]) / (sh.ND[o][object] * (1. + sh.ND[o][object]) * (1. + sh.ND[o][object]))
 					G[d] += 2. * ((g/h) - sh.O[o][f]) * ((gprime[d]*h) - (g*hprime[d])) / (h * h)
 				}
 			}

@@ -19,7 +19,6 @@ func (sh *Shoehorn) Annealing(temp_initial, temp_final, temp_decay, equilibrium_
 	// Set candidate and energy functions.
 	candidate_function = CandidateAwesome
 	energy_function = EnergyAtKL
-	sh.NormalizeObjects(1.)
 	// Perform simulated annealing.
 	errors = make([]float64, 0)
 	for t, temp = 0, temp_initial; temp > temp_final; t++ {
