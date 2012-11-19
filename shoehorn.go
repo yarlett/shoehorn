@@ -105,7 +105,7 @@ func (sh *Shoehorn) Create(S [][]string, ndims int) {
 // Learn methods. Performs gradient-descent on object locations.
 //
 
-func (sh *Shoehorn) LearnGradientDescent(lr, mom, alpha, l2 float64, numepochs int, output_prefix string) {
+func (sh *Shoehorn) LearnGradientDescent(lr, mom, l2 float64, numepochs int, output_prefix string) {
 	/*
 		Uses gradient descent to find the best location for objects.
 	*/
@@ -122,7 +122,7 @@ func (sh *Shoehorn) LearnGradientDescent(lr, mom, alpha, l2 float64, numepochs i
 	for epoch = 0; epoch < numepochs; epoch++ {
 		t = time.Now()
 		// Get gradient for all objects.
-		sh.SetGradients(alpha, l2)
+		sh.SetGradients(l2)
 		// Calculate current error.
 		E = sh.CurrentError()
 		// Update positions using gradient descent.
@@ -154,7 +154,7 @@ func (sh *Shoehorn) LearnRprop(initial_step_size float64, alpha float64, l2 floa
 	for epoch = 0; epoch < numepochs; epoch++ {
 		t = time.Now()
 		// Get gradient for all objects.
-		sh.SetGradients(alpha, l2)
+		sh.SetGradients(l2)
 		// Calculate current error.
 		E = sh.CurrentError()
 		// Update positions using gradient descent.
@@ -193,7 +193,7 @@ func (sh *Shoehorn) LearnLineSearch(alpha float64, l2 float64, numepochs int, ou
 		for _, object = range rand.Perm(sh.no) {
 			t1 = time.Now()
 			// Get gradients and baseline error.
-			sh.SetGradients(alpha, l2)
+			sh.SetGradients(l2)
 			E0 = sh.CurrentError()
 			gmag = VectorMagnitude(sh.G[object])
 			// Save current location of object.
@@ -213,7 +213,7 @@ func (sh *Shoehorn) LearnLineSearch(alpha float64, l2 float64, numepochs int, ou
 					sh.L[object][j] = L[j] - ((step / gmag) * sh.G[object][j])
 				}
 				// Get error at this location.
-				sh.SetErrors(alpha, l2)
+				sh.SetErrors(l2)
 				E1 = sh.CurrentError()
 				// Terminate search if error reduced.
 				if E1 < E0 {
@@ -254,7 +254,10 @@ func (sh *Shoehorn) SetNeighbors() {
 				sh.ND[o1][o2] += math.Pow(sh.L[o1][d]-sh.L[o2][d], 2.)
 			}
 			sh.ND[o1][o2] = math.Sqrt(sh.ND[o1][o2])
-			sh.NW[o1][o2] = math.Exp(-sh.ND[o1][o2])
+
+			// sh.NW[o1][o2] = math.Exp(-sh.ND[o1][o2])
+			sh.NW[o1][o2] = 1. / (1. + sh.ND[o1][o2])
+
 			// Set symmetric values.
 			sh.ND[o2][o1] = sh.ND[o1][o2]
 			sh.NW[o2][o1] = sh.NW[o1][o2]
@@ -315,7 +318,7 @@ func (sh *Shoehorn) SetReconstruction(object int, channel chan bool) {
 // Error methods.
 //
 
-func (sh *Shoehorn) SetErrors(alpha float64, l2 float64) {
+func (sh *Shoehorn) SetErrors(l2 float64) {
 	var (
 		o       int
 		channel chan bool
@@ -327,7 +330,7 @@ func (sh *Shoehorn) SetErrors(alpha float64, l2 float64) {
 	// Compute error for each object.
 	channel = make(chan bool, sh.no)
 	for o = 0; o < sh.no; o++ {
-		go sh.Error(o, alpha, l2, channel)
+		go sh.Error(o, l2, channel)
 	}
 	// Retrieve errors.
 	for o = 0; o < sh.no; o++ {
@@ -336,25 +339,24 @@ func (sh *Shoehorn) SetErrors(alpha float64, l2 float64) {
 	return
 }
 
-func (sh *Shoehorn) Error(object int, alpha float64, l2 float64, channel chan bool) {
+func (sh *Shoehorn) Error(object int, l2 float64, channel chan bool) {
 	var (
-		f, j int
+		f, d int
 		p, q float64
 	)
 	// Initialize error.
-	sh.E[object] = 0.0
+	sh.E[object] = 0.
 	// Compute reconstruction error for object.
 	for f = 0; f < sh.nf; f++ {
 		// Get actual and reconstructed feature values.
 		p = sh.O[object][f]
-		q = (alpha * p) + ((1.0 - alpha) * (sh.WP[object][f] / sh.W[object]))
+		q = sh.WP[object][f] / sh.W[object]
 		// Update error.
-		//error += p * math.Log(p/q)
-		sh.E[object] += math.Pow(p-q, 2.0)
+		sh.E[object] += math.Pow(p-q, 2.)
 	}
 	// Account for L2 punishment.
-	for j = 0; j < sh.nd; j++ {
-		sh.E[object] += 0.5 * l2 * math.Pow(sh.L[object][j], 2.0)
+	for d = 0; d < sh.nd; d++ {
+		sh.E[object] += .5 * l2 * math.Pow(sh.L[object][d], 2.)
 	}
 	// Signal completion.
 	channel <- true
@@ -372,7 +374,7 @@ func (sh *Shoehorn) CurrentError() (E float64) {
 // Gradient methods.
 //
 
-func (sh *Shoehorn) SetGradients(alpha, l2 float64) {
+func (sh *Shoehorn) SetGradients(l2 float64) {
 	var (
 		o       int
 		channel chan bool
@@ -384,7 +386,7 @@ func (sh *Shoehorn) SetGradients(alpha, l2 float64) {
 	// Compute gradient information.
 	channel = make(chan bool, sh.no)
 	for o = 0; o < sh.no; o++ {
-		go sh.Gradient(o, alpha, l2, channel)
+		go sh.Gradient(o, l2, channel)
 	}
 	// Retrieve gradient information.
 	for o = 0; o < sh.no; o++ {
@@ -393,67 +395,61 @@ func (sh *Shoehorn) SetGradients(alpha, l2 float64) {
 	return
 }
 
-func (sh *Shoehorn) Gradient(object int, alpha, l2 float64, channel chan bool) {
+func (sh *Shoehorn) Gradient(object int, l2 float64, channel chan bool) {
 	var (
-		o, d, f                   int
-		E, p, q, tmp1, tmp2, tmp3 float64
-		G, T1, T2                 []float64
+		o, d, f           int
+		E, g, h           float64
+		gprime, hprime, G []float64
 	)
-	T1 = make([]float64, sh.nd)
-	T2 = make([]float64, sh.nd)
 	G = make([]float64, sh.nd)
-	// Compute impact of object position on its own reconstruction error.
+	// Compute impact of object location on its own reconstruction error.
 	for f = 0; f < sh.nf; f++ {
-		p = sh.O[object][f]
-		// Calculate the gradient terms.
-		for d = 0; d < sh.nd; d++ {
-			T1[d], T2[d] = 0., 0.
-		}
+		g = 0.
+		h = 0.
+		gprime = make([]float64, sh.nd)
+		hprime = make([]float64, sh.nd)
 		for o = 0; o < sh.no; o++ {
 			if o != object {
-				tmp1 = sh.NW[object][o] / sh.ND[object][o]
 				for d = 0; d < sh.nd; d++ {
-					tmp2 = tmp1 * (sh.L[o][d] - sh.L[object][d])
-					T1[d] += tmp2 * sh.O[o][f]
-					T2[d] += tmp2
+					// // Exp.
+					// gprime[d] += sh.O[o][f] * sh.NW[object][o] * (sh.L[o][d] - sh.L[object][d]) / sh.ND[object][o]
+					// hprime[d] += sh.NW[object][o] * (sh.L[o][d] - sh.L[object][d]) / sh.ND[object][o]
+					// Pow.
+					gprime[d] += sh.O[o][f] * (sh.L[o][d] - sh.L[object][d]) / (sh.ND[object][o] * (1. + sh.ND[object][o]) * (1. + sh.ND[object][o]))
+					hprime[d] += (sh.L[o][d] - sh.L[object][d]) / (sh.ND[object][o] * (1. + sh.ND[object][o]) * (1. + sh.ND[object][o]))
 				}
 			}
 		}
-		// Set reconstruction probability.
-		q = (alpha * p) + ((1.0 - alpha) * (sh.WP[object][f] / sh.W[object]))
-		// Update gradient information.
-		// tmp1 = (alpha - 1.0) * p / q
-		tmp1 = 2.0 * (p - q) * (alpha - 1.0)
+		g = sh.WP[object][f]
+		h = sh.W[object]
 		for d = 0; d < sh.nd; d++ {
-			G[d] += tmp1 * (((T1[d] * sh.W[object]) - (sh.WP[object][f] * T2[d])) / (sh.W[object] * sh.W[object]))
+			G[d] += 2. * ((g/h) - sh.O[object][f]) * ((gprime[d]*h) - (g*hprime[d])) / (h * h)
 		}
 		// Update error.
-		// E += p * math.Log(p/q)
-		E += math.Pow(p-q, 2.)
+		E += math.Pow(sh.O[object][f]-(g/h), 2.)
 	}
-	// Compute impact of object position on reconstruction error of other objects.
+	// Compute impact of object location on reconstruction error of other objects.
 	for o = 0; o < sh.no; o++ {
 		if o != object {
-			// Calculate distance and weight between current object and object being reconstructed.
-			tmp1 = sh.NW[object][o] / sh.ND[object][o]
-			// Iterate over features of object getting reconstructed.
 			for f = 0; f < sh.nf; f++ {
-				p = sh.O[o][f]
-				// Update gradient information.
-				// tmp2 = (alpha - 1.0) * p / ((alpha * p) + ((1.0 - alpha) * (sh.WP[o][f] / sh.W[o])))
-				tmp2 = 2.0 * (p - ((alpha * p) + ((1.0 - alpha) * (sh.WP[o][f] / sh.W[o])))) * (alpha - 1.0)
+				g = sh.WP[o][f]
+				h = sh.W[o]
 				for d = 0; d < sh.nd; d++ {
-					tmp3 = tmp1 * (sh.L[o][d] - sh.L[object][d])
-					G[d] += tmp2 * (((sh.W[o] * tmp3 * sh.O[object][f]) - (sh.WP[o][f] * tmp3)) / (sh.W[o] * sh.W[o]))
+					// // Exp.
+					// gprime[d] = sh.O[object][f] * sh.NW[o][object] * (sh.L[o][d] - sh.L[object][d]) / sh.ND[o][object]
+					// hprime[d] = sh.NW[o][object] * (sh.L[o][d] - sh.L[object][d]) / sh.ND[o][object]
+					// Pow.
+					gprime[d] = sh.O[object][f] * (sh.L[o][d] - sh.L[object][d]) / (sh.ND[o][object] * (1. + sh.ND[o][object]) * (1. + sh.ND[o][object]))
+					hprime[d] = (sh.L[o][d] - sh.L[object][d]) / (sh.ND[o][object] * (1. + sh.ND[o][object]) * (1. + sh.ND[o][object]))
+					G[d] += 2. * ((g/h) - sh.O[o][f]) * ((gprime[d]*h) - (g*hprime[d])) / (h * h)
 				}
 			}
 		}
 	}
 	// Account for L2 punishment.
-	baseE := E
 	for d = 0; d < sh.nd; d++ {
-		E += 0.5 * l2 * math.Pow(sh.L[object][d], 2.) * baseE
-		G[d] += l2 * sh.L[object][d] * baseE
+		E += .5 * l2 * math.Pow(sh.L[object][d], 2.)
+		G[d] += l2 * sh.L[object][d]
 	}
 	// Set the error and gradient on the shoehorn object.
 	sh.E[object] = E
@@ -477,26 +473,22 @@ func (sh *Shoehorn) CopyGradient() (G [][]float64) {
 
 func (sh *Shoehorn) GradientDescent(learning_rate, momentum float64, U [][]float64) {
 	var (
-		o, d           int
-		u, maxmag, mag float64
+		o, d   int
+		u, mag float64
 	)
-	// Scale gradients so largest has magnitude of 1.
-	maxmag = 0.
-	for o = 0; o < sh.no; o++ {
-		mag = VectorMagnitude(sh.G[o])
-		if mag > maxmag {
-			maxmag = mag
-		}
-	}
-	for o = 0; o < sh.no; o++ {
-		for d = 0; d < sh.nd; d++ {
-			sh.G[o][d] /= maxmag
-		}
-	}
+	// // Scale gradients so largest has magnitude of 1.
+	// maxmag = 0.
+	// for o = 0; o < sh.no; o++ {
+	// 	mag = VectorMagnitude(sh.G[o])
+	// 	if mag > maxmag {
+	// 		maxmag = mag
+	// 	}
+	// }
 	// Update locations.
 	for o = 0; o < sh.no; o++ {
+		mag = VectorMagnitude(sh.G[o])
 		for d = 0; d < sh.nd; d++ {
-			u = (learning_rate * -sh.G[o][d]) + (momentum * U[o][d])
+			u = (learning_rate * -sh.G[o][d] / mag) + (momentum * U[o][d])
 			sh.L[o][d] += u
 			U[o][d] = u
 		}

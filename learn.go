@@ -19,13 +19,56 @@ func (sh *Shoehorn) LearnRepositioning(epochs int, output_prefix string) {
 	energy = TotalEnergy(sh.O, sh.L)
 	for epoch = 0; epoch < epochs; epoch++ {
 		tm = time.Now()
-		energy = UpdaterGRAD(sh.O, sh.L, energy, sh)
+
+		energy = UpdaterGAT(sh.O, sh.L, energy)
+		// energy = UpdaterGRAD(sh.O, sh.L, energy, sh)
+
 		// Write locations to file.
 		if output_prefix != "" {
 			sh.WriteLocations(fmt.Sprintf("%v.csv", output_prefix))
 		}
 		// Report status.
 		fmt.Printf("Epoch %d: Energy=%.6e (took %v; %v elapsed).\n", epoch, energy, time.Now().Sub(tm), time.Now().Sub(TM))
+	}
+}
+
+func (sh *Shoehorn) Foo(O, L [][]float64, output_prefix string) {
+	var (
+		o1, o2, d                int
+		this_energy, best_energy float64
+		best_location            []float64
+		tm                       time.Time
+	)
+	for o1 = 0; o1 < len(O); o1++ {
+		tm = time.Now()
+		best_energy = TotalEnergy(O, L)
+		best_location = make([]float64, len(L[o1]))
+		for d = 0; d < len(L[o1]); d++ {
+			best_location[d] = L[o1][d]
+		}
+		for o2 = 0; o2 < len(O); o2++ {
+			// Relocate o1 to o2's location (plus a tiny bit of noise).
+			for d = 0; d < len(L[o1]); d++ {
+				L[o1][d] = L[o2][d] + (.1 * rand.NormFloat64())
+			}
+			this_energy = TotalEnergy(O, L)
+			// Save position if it's better.
+			if this_energy < best_energy {
+				for d = 0; d < len(L[o1]); d++ {
+					best_location[d] = L[o1][d]
+				}
+				best_energy = this_energy
+			}
+		}
+		// Move o1 to the best position.
+		for d = 0; d < len(L[o1]); d++ {
+			L[o1][d] = best_location[d]
+		}
+		// Write locations to file.
+		if output_prefix != "" {
+			sh.WriteLocations(fmt.Sprintf("%v.csv", output_prefix))
+		}
+		fmt.Printf("Object %v relocated E=%e (took %v).\n", o1, best_energy, time.Now().Sub(tm))
 	}
 }
 
@@ -71,33 +114,16 @@ func UpdaterGRAD(O, L [][]float64, current_energy float64, sh *Shoehorn) (new_en
 		Implements a gradient-based location updater.
 	*/
 	var (
-		o, oo, d int
-		curloc, G    []float64
+		o, d int
+		G    []float64
 	)
 	// Randomly select an object to update.
 	o = rand.Intn(len(O))
-	// Try to wormhole the object on a small number of trials.
-	if rand.Float64() < .1 {
-		curloc = make([]float64, len(L[o]))
-		oo = rand.Intn(len(O))
-		for d = 0; d < len(L[o]); d++ {
-			curloc[d] = L[o][d]
-			L[o][d] = L[oo][d] + (.1 * rand.NormFloat64())
-		}
-		new_energy = TotalEnergy(O, L)
-		if new_energy >= current_energy {
-			for d = 0; d < len(L[o]); d++ {
-				L[o][d] = curloc[d]
-			}
-			new_energy = current_energy			
-		}
-		return
-	}
 	// Perform gradient descent.
 	new_energy, G = GetGradient(o, O, L)
 	mg := VectorMagnitude(G)
 	for d = 0; d < len(G); d++ {
-		L[o][d] = L[o][d] - (.5 * G[d] / mg)
+		L[o][d] = L[o][d] - (.1 * G[d] / mg)
 	}
 	// // Perform line search.
 	// stepsize = 2.

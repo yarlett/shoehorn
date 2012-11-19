@@ -108,9 +108,9 @@ func Quantile(data []float64, percentile float64) (quantile float64) {
 
 func VectorMagnitude(V []float64) (mag float64) {
 	for i := 0; i < len(V); i++ {
-		mag += math.Pow(V[i], 2.0)
+		mag += math.Pow(V[i], 2.)
 	}
-	mag = math.Pow(mag, 0.5)
+	mag = math.Sqrt(mag)
 	return
 }
 
