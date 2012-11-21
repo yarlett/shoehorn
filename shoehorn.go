@@ -395,60 +395,56 @@ func (sh *Shoehorn) SetGradients(l2 float64) {
 
 func (sh *Shoehorn) Gradient(object int, l2 float64, channel chan bool) {
 	var (
-		o, d, f           int
-		E, g, h           float64
-		gprime, hprime, G []float64
+		o, d, f                                                           int
+		E, g, h, g_other, h_other, gprime_other, hprime_other, tmp1, tmp2 float64
+		gprime, hprime, G                                                 []float64
 	)
 	G = make([]float64, sh.nd)
-	// Compute impact of object location on its own reconstruction error.
+	gprime = make([]float64, sh.nd)
+	hprime = make([]float64, sh.nd)
+	// Compute gradient information for each feature.
 	for f = 0; f < sh.nf; f++ {
-		g = 0.
-		h = 0.
-		gprime = make([]float64, sh.nd)
-		hprime = make([]float64, sh.nd)
-		for o = 0; o < sh.no; o++ {
-			if o != object {
-				for d = 0; d < sh.nd; d++ {
-					// Exp.
-					gprime[d] += sh.O[o][f] * sh.NW[object][o] * (sh.L[o][d] - sh.L[object][d]) / sh.ND[object][o]
-					hprime[d] += sh.NW[object][o] * (sh.L[o][d] - sh.L[object][d]) / sh.ND[object][o]
-					// // Pow.
-					// gprime[d] += sh.O[o][f] * (sh.L[o][d] - sh.L[object][d]) / (sh.ND[object][o] * (1. + sh.ND[object][o]) * (1. + sh.ND[object][o]))
-					// hprime[d] += (sh.L[o][d] - sh.L[object][d]) / (sh.ND[object][o] * (1. + sh.ND[object][o]) * (1. + sh.ND[object][o]))
-				}
-			}
+		// Reset gradient terms (they are computed on a per-feature basis).
+		for d = 0; d < sh.nd; d++ {
+			gprime[d], hprime[d] = 0., 0.
 		}
 		g = sh.WP[object][f]
 		h = sh.W[object]
+		for o = 0; o < sh.no; o++ {
+			if o != object {
+				tmp1 = sh.NW[object][o] / sh.ND[object][o]
+				g_other = sh.WP[o][f]
+				h_other = sh.W[o]
+				for d = 0; d < sh.nd; d++ {
+					// Accumulate information about the impact of object's location on its own reconstruction error.
+					tmp2 = tmp1 * (sh.L[o][d] - sh.L[object][d])
+					gprime[d] += sh.O[o][f] * tmp2
+					hprime[d] += tmp2
+					// Accumulate information about the impact of object's location on the reconstruction error of object o.
+					gprime_other = sh.O[object][f] * tmp2
+					hprime_other = tmp2
+					G[d] += 2. * ((g_other / h_other) - sh.O[o][f]) * ((gprime_other * h_other) - (g_other * hprime_other)) / (h_other * h_other)
+				}
+			}
+		}
+		// Update gradient.
+		tmp1 = 2. * ((g / h) - sh.O[object][f]) / (h * h)
 		for d = 0; d < sh.nd; d++ {
-			G[d] += 2. * ((g/h) - sh.O[object][f]) * ((gprime[d]*h) - (g*hprime[d])) / (h * h)
+			G[d] += tmp1 * ((gprime[d] * h) - (g * hprime[d]))
 		}
 		// Update error.
 		E += math.Pow(sh.O[object][f]-(g/h), 2.)
 	}
-	// Compute impact of object location on reconstruction error of other objects.
-	for o = 0; o < sh.no; o++ {
-		if o != object {
-			for f = 0; f < sh.nf; f++ {
-				g = sh.WP[o][f]
-				h = sh.W[o]
-				for d = 0; d < sh.nd; d++ {
-					// Exp.
-					gprime[d] = sh.O[object][f] * sh.NW[o][object] * (sh.L[o][d] - sh.L[object][d]) / sh.ND[o][object]
-					hprime[d] = sh.NW[o][object] * (sh.L[o][d] - sh.L[object][d]) / sh.ND[o][object]
-					// // Pow.
-					// gprime[d] = sh.O[object][f] * (sh.L[o][d] - sh.L[object][d]) / (sh.ND[o][object] * (1. + sh.ND[o][object]) * (1. + sh.ND[o][object]))
-					// hprime[d] = (sh.L[o][d] - sh.L[object][d]) / (sh.ND[o][object] * (1. + sh.ND[o][object]) * (1. + sh.ND[o][object]))
-					G[d] += 2. * ((g/h) - sh.O[o][f]) * ((gprime[d]*h) - (g*hprime[d])) / (h * h)
-				}
-			}
-		}
-	}
 	// Account for L2 punishment.
+	distance := VectorMagnitude(sh.L[object])
+	E += l2 * distance
 	for d = 0; d < sh.nd; d++ {
-		E += .5 * l2 * math.Pow(sh.L[object][d], 2.)
-		G[d] += l2 * sh.L[object][d]
+		G[d] += l2 * sh.L[object][d] / distance
 	}
+	// for d = 0; d < sh.nd; d++ {
+	// 	E += .5 * l2 * math.Pow(sh.L[object][d], 2.)
+	// 	G[d] += l2 * sh.L[object][d]
+	// }
 	// Set the error and gradient on the shoehorn object.
 	sh.E[object] = E
 	copy(sh.G[object], G)

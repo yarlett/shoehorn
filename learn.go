@@ -19,10 +19,7 @@ func (sh *Shoehorn) LearnRepositioning(epochs int, output_prefix string) {
 	energy = TotalEnergy(sh.O, sh.L)
 	for epoch = 0; epoch < epochs; epoch++ {
 		tm = time.Now()
-
 		energy = UpdaterGAT(sh.O, sh.L, energy)
-		// energy = UpdaterGRAD(sh.O, sh.L, energy, sh)
-
 		// Write locations to file.
 		if output_prefix != "" {
 			sh.WriteLocations(fmt.Sprintf("%v.csv", output_prefix))
@@ -90,7 +87,7 @@ func UpdaterGAT(O, L [][]float64, current_energy float64) (energy float64) {
 	oo = rand.Intn(len(O))
 	for d = 0; d < len(L[o]); d++ {
 		curloc[d] = L[o][d]
-		newloc[d] = L[oo][d] + (2. * rand.NormFloat64())
+		newloc[d] = L[oo][d] + (.1 * rand.NormFloat64())
 	}
 	// Get energy at new location.
 	for d = 0; d < len(L[o]); d++ {
@@ -109,13 +106,13 @@ func UpdaterGAT(O, L [][]float64, current_energy float64) (energy float64) {
 	return
 }
 
-func UpdaterGRAD(O, L [][]float64, current_energy float64, sh *Shoehorn) (new_energy float64) {
+func UpdaterGRAD(O, L [][]float64, current_energy float64) (new_energy float64) {
 	/*
 		Implements a gradient-based location updater.
 	*/
 	var (
 		o, d int
-		G    []float64
+		G       []float64
 	)
 	// Randomly select an object to update.
 	o = rand.Intn(len(O))
@@ -125,29 +122,6 @@ func UpdaterGRAD(O, L [][]float64, current_energy float64, sh *Shoehorn) (new_en
 	for d = 0; d < len(G); d++ {
 		L[o][d] = L[o][d] - (.1 * G[d] / mg)
 	}
-	// // Perform line search.
-	// stepsize = 2.
-	// for t = 0; t < 10; t++ {
-	// 	// Set location.
-	// 	for d = 0; d < len(L[o]); d++ {
-	// 		L[o][d] = curloc[d] - (stepsize * G[d])
-	// 	}
-	// 	// Get new energy.
-	// 	new_energy = TotalEnergy(O, L)
-	// 	// Decide whether to keep new location.
-	// 	if new_energy < current_energy {
-	// 		break
-	// 	} else {
-	// 		stepsize *= .5
-	// 	}
-	// }
-	// // Stay at current location if energy hasn't been reduced.
-	// if new_energy > current_energy {
-	// 	for d = 0; d < len(L[o]); d++ {
-	// 		L[o][d] = curloc[d]
-	// 	}
-	// 	new_energy = current_energy
-	// }
 	return
 }
 
@@ -219,6 +193,7 @@ func GetReconstruction(object int, O [][]float64, L [][]float64, R [][]float64, 
 				w += math.Pow(L[object][d]-L[o][d], 2.)
 			}
 			w = math.Exp(-math.Sqrt(w))
+			// Update sum of weights for the object.
 			RW[object] += w
 			// Add o's contribution to the reconstruction.
 			for f = 0; f < nf; f++ {
@@ -232,28 +207,24 @@ func GetReconstruction(object int, O [][]float64, L [][]float64, R [][]float64, 
 
 func GetGradient(object int, O [][]float64, L [][]float64) (E float64, G []float64) {
 	var (
-		no, nd, nf, o, d, f                      int
-		p, q, tmp1, tmp2, tmp3, weight, distance float64
-		RW, T1, T2                               []float64
-		R                                        [][]float64
+		no, nd, nf, o, d, f    int
+		g, h, distance, weight, tmp float64
+		RW, gprime, hprime     []float64
+		R                      [][]float64
 	)
 	// Initializations.
 	no = len(O)
 	nd = len(L[object])
 	nf = len(O[object])
-	T1 = make([]float64, nd)
-	T2 = make([]float64, nd)
 	G = make([]float64, nd)
 	// Get the reconstruction data.
 	R, RW = GetReconstructions(O, L)
-	// Compute impact of object position on its own reconstruction error.
+	// Compute impact of object location on its own reconstruction error.
 	for f = 0; f < nf; f++ {
-		p = O[object][f]
-		q = R[object][f] / RW[object]
-		// Calculate the gradient terms, T1 and T2.
-		for d = 0; d < nd; d++ {
-			T1[d], T2[d] = 0., 0.
-		}
+		g = 0.
+		h = 0.
+		gprime = make([]float64, nd)
+		hprime = make([]float64, nd)
 		for o = 0; o < no; o++ {
 			if o != object {
 				// Get weight and distance.
@@ -262,42 +233,55 @@ func GetGradient(object int, O [][]float64, L [][]float64) (E float64, G []float
 					distance += math.Pow(L[object][d]-L[o][d], 2.)
 				}
 				distance = math.Sqrt(distance)
-				weight = math.Exp(-distance)
-				// Update gradient terms.
-				tmp1 = weight / distance
-				for d = 0; d < nd; d++ {
-					tmp2 = tmp1 * (L[o][d] - L[object][d])
-					T1[d] += tmp2 * O[o][f]
-					T2[d] += tmp2
+				if distance > 0. {
+					weight = math.Exp(-distance)
+					// Update gradient information.
+					for d = 0; d < nd; d++ {
+						// Exp.
+						tmp = weight * (L[o][d] - L[object][d]) / distance
+						gprime[d] += O[o][f] * tmp
+						hprime[d] += tmp
+						// // Pow.
+						// tmp = (L[o][d] - L[object][d]) / (distance * (1. + distance) * (1. + distance))
+						// gprime[d] += O[o][f] * tmp
+						// hprime[d] += tmp
+					}
 				}
 			}
 		}
-		// Update gradient information.
-		tmp1 = 2. * (q - p)
+		g = R[object][f]
+		h = RW[object]
 		for d = 0; d < nd; d++ {
-			G[d] += tmp1 * (((T1[d] * RW[object]) - (R[object][f] * T2[d])) / (RW[object] * RW[object]))
+			G[d] += 2. * ((g / h) - O[object][f]) * ((gprime[d] * h) - (g * hprime[d])) / (h * h)
 		}
 	}
-	// Compute impact of object position on reconstruction error of other objects.
+	// Compute impact of object location on reconstruction error of other objects.
 	for o = 0; o < no; o++ {
 		if o != object {
-			// Calculate distance and weight between current object and object being reconstructed.
+			// Get weight and distance.
 			distance = 0.
 			for d = 0; d < nd; d++ {
 				distance += math.Pow(L[object][d]-L[o][d], 2.)
 			}
 			distance = math.Sqrt(distance)
-			weight = math.Exp(-distance)
-			tmp1 = weight / distance
-			// Iterate over features of object getting reconstructed.
-			for f = 0; f < nf; f++ {
-				p = O[o][f]
-				q = R[o][f] / RW[o]
+			if distance > 0. {
+				weight = math.Exp(-distance)
 				// Update gradient information.
-				tmp2 = 2. * (q - p)
-				for d = 0; d < nd; d++ {
-					tmp3 = tmp1 * (L[o][d] - L[object][d])
-					G[d] += tmp2 * (((RW[o] * tmp3 * O[object][f]) - (R[o][f] * tmp3)) / (RW[o] * RW[o]))
+				for f = 0; f < nf; f++ {
+					g = R[o][f]
+					h = RW[o]
+					for d = 0; d < nd; d++ {
+						// Exp.
+						tmp = weight * (L[o][d] - L[object][d]) / distance
+						gprime[d] = O[object][f] * tmp
+						hprime[d] = tmp
+						// // Pow.
+						// tmp = (L[o][d] - L[object][d]) / (distance * (1. + distance) * (1. + distance))
+						// gprime[d] = O[object][f] * tmp
+						// hprime[d] = tmp
+						// Update gradient.
+						G[d] += 2. * ((g / h) - O[o][f]) * ((gprime[d] * h) - (g * hprime[d])) / (h * h)
+					}
 				}
 			}
 		}

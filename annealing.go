@@ -7,62 +7,72 @@ import (
 	"time"
 )
 
-func (sh *Shoehorn) Annealing(temp_initial, temp_final, temp_decay, equilibrium_threshold float64, output_prefix string) {
+func (sh *Shoehorn) Annealing(temp_initial, temp_final, temp_decay float64, temp_epochs int, output_prefix string) {
 	var (
-		t, o, d                                int
-		temp, error, e_cur, e_try, equilibrium float64
-		location, errors                       []float64
+		temp_its, t, o, d                      int
+		temp, sigma, e_cur, e_try, equilibrium float64
+		location0, location1, errors           []float64
 		candidate_function                     func(int, float64, *Shoehorn) []float64
-		energy_function                        func(int, []float64, *Shoehorn) (e float64)
+		energy_function                        func([][]float64, [][]float64) float64
 		tm                                     time.Time
 	)
 	// Set candidate and energy functions.
-	candidate_function = CandidateAwesome
-	energy_function = EnergyAtKL
+	candidate_function = CandidateWormhole
+	energy_function = TotalEnergy
+	location0 = make([]float64, sh.nd)
+	sigma = 1.
+	temp_its = temp_epochs * sh.no
 	// Perform simulated annealing.
 	errors = make([]float64, 0)
+	e_cur = energy_function(sh.O, sh.L)
 	for t, temp = 0, temp_initial; temp > temp_final; t++ {
-		// Iterate through objects.
 		tm = time.Now()
-		for o, error = 0, 0.; o < sh.no; o++ {
-			// Calculate current and try errors.
-			e_cur = energy_function(o, sh.L[o], sh)
-			location = candidate_function(o, 1., sh)
-			e_try = energy_function(o, location, sh)
-			// Decide whether to accept the new position or not.
-			if rand.Float64() < math.Exp(-(e_try-e_cur)/temp) {
-				for d = 0; d < sh.nd; d++ {
-					sh.L[o][d] = location[d]
-				}
-				error += e_try
-			} else {
-				error += e_cur
+		o = rand.Intn(sh.no)
+		// Calculate try error.
+		location1 = candidate_function(o, sigma, sh)
+		for d = 0; d < sh.nd; d++ {
+			location0[d] = sh.L[o][d]
+			sh.L[o][d] = location1[d]
+		}
+		e_try = energy_function(sh.O, sh.L)
+		// Decide whether to accept the new position or not.
+		if rand.Float64() < math.Exp(-(e_try-e_cur)/temp) {
+			e_cur = e_try
+		} else {
+			for d = 0; d < sh.nd; d++ {
+				sh.L[o][d] = location0[d]
 			}
 		}
-		error = error / float64(sh.no)
-		errors = append(errors, error)
-		if len(errors) > 500 {
-			errors = errors[len(errors)-500:]
-		}
-		// Compute thermal equilibrium measure.
-		equilibrium = ThermalEquilibrium(errors)
-		// Perform equilibrium actions.
-		if equilibrium < equilibrium_threshold {
-			// Reduce temperature.
-			temp *= temp_decay
-			// Reset errors.
+		errors = append(errors, e_cur)
+
+		if len(errors) == temp_its {
 			errors = make([]float64, 0)
-			// Write locations to file.
-			if output_prefix != "" {
-				sh.WriteLocations(fmt.Sprintf("%v_%v.csv", output_prefix, t))
-			}
+			temp *= temp_decay
+		}
+
+		// if len(errors) > 500 {
+		// 	errors = errors[len(errors)-500:]
+		// }
+		// // Compute thermal equilibrium measure.
+		// equilibrium = ThermalEquilibrium(errors)
+		// // Perform equilibrium actions.
+		// if equilibrium < equilibrium_threshold {
+		// 	// Reduce temperature.
+		// 	temp *= temp_decay
+		// 	// Reset errors.
+		// 	errors = make([]float64, 0)
+		// }
+
+		// Write locations to file.
+		if output_prefix != "" {
+			sh.WriteLocations(fmt.Sprintf("%v.csv", output_prefix))
 		}
 		// Report status.
-		fmt.Printf("Epoch %d: Error=%.6e Temp=%.6e Equilibrium=%.6e (took %v).\n", t, error, temp, equilibrium, time.Now().Sub(tm))
+		fmt.Printf("Epoch %d: Error=%.6e Temp=%.6e Equilibrium=%.6e (took %v).\n", t, e_cur, temp, equilibrium, time.Now().Sub(tm))
 	}
 	// Write locations to file before exiting.
 	if output_prefix != "" {
-		sh.WriteLocations(fmt.Sprintf("%v_%v.csv", output_prefix, t))
+		sh.WriteLocations(fmt.Sprintf("%v.csv", output_prefix))
 	}
 }
 
@@ -101,14 +111,14 @@ func Candidate(object int, sh *Shoehorn) (location []float64) {
 	return
 }
 
-func CandidateWormhole(object int, sh *Shoehorn) (location []float64) {
+func CandidateWormhole(object int, sigma float64, sh *Shoehorn) (location []float64) {
 	var (
 		d, target_object int
 	)
 	location = make([]float64, sh.nd)
 	target_object = rand.Intn(sh.no)
 	for d = 0; d < sh.nd; d++ {
-		location[d] = sh.L[target_object][d] + (1. * rand.NormFloat64())
+		location[d] = sh.L[target_object][d] + (sigma * rand.NormFloat64())
 	}
 	return
 }
@@ -118,53 +128,6 @@ func CandidateAwesome(object int, sigma float64, sh *Shoehorn) (location []float
 	// o := rand.Intn(sh.no)
 	for d := 0; d < sh.nd; d++ {
 		location[d] = sh.L[object][d] + (sigma * rand.NormFloat64())
-	}
-	return
-}
-
-// Energy functions.
-
-func EnergyAtKL(object int, location []float64, sh *Shoehorn) (energy float64) {
-	/*
-		Returns the energy of an object when located in a particular position based on Kullback-Leibler divergence.
-	*/
-	var (
-		f       int
-		W, p, q float64
-		R       []float64
-	)
-	// Get reconstruction.
-	R, W = sh.ReconstructionAt(object, location)
-	// Energy is sum of squared error.
-	for f = 0; f < sh.nf; f++ {
-		p = sh.O[object][f]
-		if p > 0. {
-			q = (0.999 * (R[f] / W)) + (0.001 * p)
-			energy += p * (math.Log(p) - math.Log(q))
-		}
-	}
-	return
-}
-
-func EnergyAtSSE(object int, location []float64, sh *Shoehorn) (energy float64) {
-	/*
-		Returns the energy of an object when located in a particular position based on sum squared error function.
-	*/
-	var (
-		f  int
-		mg float64
-		R  []float64
-	)
-	// Get reconstruction.
-	R, _ = sh.ReconstructionAt(object, location)
-	// Get magnitude of reconstruction.
-	for f = 0; f < sh.nf; f++ {
-		mg += R[f] * R[f]
-	}
-	mg = math.Sqrt(mg)
-	// Energy is sum of squared error.
-	for f = 0; f < sh.nf; f++ {
-		energy += math.Pow((R[f]/mg)-sh.O[object][f], 2.)
 	}
 	return
 }

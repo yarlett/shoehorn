@@ -11,7 +11,7 @@ import (
 var (
 	NDIMS int     = 2
 	ALPHA float64 = 0.01
-	L2    float64 = 1.
+	L2    float64 = 0.
 )
 
 // Returns a Shoehorn object initialized with some test data.
@@ -34,7 +34,7 @@ func GetTestData(nobjs, nd int) (sh Shoehorn) {
 	// Create showhoen instance from the data.
 	sh = Shoehorn{}
 	sh.Create(S, nd)
-	sh.Rescale(5.0)
+	sh.Rescale(5.)
 	return
 }
 
