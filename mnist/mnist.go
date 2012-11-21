@@ -13,7 +13,8 @@ func main() {
 	fmt.Printf("Took %v to create data set of %d objects exhibiting %d distinct features.\n", time.Now().Sub(t1), len(sh.O), len(sh.O[0]))
 
 	// sh.Annealing(1e3, 1e-1, .9, 10, "tmp/locations")
-	sh.LearnGradientDescent(.1, 0, 2e5, 1000, "tmp/locations3")
+	//sh.LearnRprop(1e-2, 0, 10000, "tmp/locations")
+	sh.LearnGradientDescent(50., 0., 0., 10000, "tmp/locations")
 
 	// sh.Foo(sh.O, sh.L, "tmp/locations2")
 	// sh.LearnRepositioning(25000, "tmp/locations")

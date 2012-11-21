@@ -11,7 +11,7 @@ import (
 var (
 	NDIMS int     = 2
 	ALPHA float64 = 0.01
-	L2    float64 = 0.
+	L2    float64 = 1.
 )
 
 // Returns a Shoehorn object initialized with some test data.
