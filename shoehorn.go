@@ -254,8 +254,7 @@ func (sh *Shoehorn) SetNeighbors() {
 				sh.ND[o1][o2] += math.Pow(sh.L[o1][d]-sh.L[o2][d], 2.)
 			}
 			sh.ND[o1][o2] = math.Sqrt(sh.ND[o1][o2])
-			// sh.NW[o1][o2] = math.Exp(-sh.ND[o1][o2])
-			sh.NW[o1][o2] = 1. / (1. + sh.ND[o1][o2])
+			sh.NW[o1][o2] = math.Exp(-sh.ND[o1][o2])
 			// Set symmetric values.
 			sh.ND[o2][o1] = sh.ND[o1][o2]
 			sh.NW[o2][o1] = sh.NW[o1][o2]
@@ -340,17 +339,12 @@ func (sh *Shoehorn) SetErrors(l2 float64) {
 func (sh *Shoehorn) Error(object int, l2 float64, channel chan bool) {
 	var (
 		f int
-		p, q float64
 	)
 	// Initialize error.
 	sh.E[object] = 0.
 	// Compute reconstruction error for object.
 	for f = 0; f < sh.nf; f++ {
-		// Get actual and reconstructed feature values.
-		p = sh.O[object][f]
-		q = sh.WP[object][f] / sh.W[object]
-		// Update error.
-		sh.E[object] += math.Pow(p-q, 2.)
+		sh.E[object] += math.Pow(sh.O[object][f]-(sh.WP[object][f] / sh.W[object]), 2.)
 	}
 	// Account for L2 punishment.
 	distance := VectorMagnitude(sh.L[object])
@@ -364,6 +358,12 @@ func (sh *Shoehorn) CurrentError() (E float64) {
 		E += sh.E[o]
 	}
 	E /= float64(sh.no)
+	return
+}
+
+func (sh *Shoehorn) TotalEnergy(l2 float64) (E float64) {
+	sh.SetErrors(l2)
+	E = sh.CurrentError()
 	return
 }
 
