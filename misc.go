@@ -122,6 +122,16 @@ func MeanMagnitude(M [][]float64) (magnitude float64) {
 	return
 }
 
+func MatrixMagnitude(M [][]float64) (magnitude float64) {
+	for i := 0; i < len(M); i++ {
+		for j := 0; j < len(M[i]); j++ {
+			magnitude += M[i][j] * M[i][j]
+		}
+	}
+	magnitude = math.Sqrt(magnitude)
+	return
+}
+
 func ReturnMatrix(i, j int, initialval float64) (M [][]float64) {
 	M = make([][]float64, i)
 	for ii := 0; ii < i; ii++ {

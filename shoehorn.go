@@ -128,7 +128,7 @@ func (sh *Shoehorn) LearnGradientDescent(lr, mom, l2 float64, numepochs int, out
 		// Update positions using gradient descent.
 		sh.GradientDescent(lr, mom, U)
 		// Report status.
-		fmt.Printf("Epoch %6d: E=%.8e G=%.8e S=%.8e D=%.8e (epoch took %v; %v elapsed).\n", epoch+1, E, MeanMagnitude(sh.G), lr, MeanMagnitude(sh.L), time.Now().Sub(t), time.Now().Sub(T))
+		fmt.Printf("Epoch %6d: E=%.8e G=%.8e S=%.8e D=%.8e (epoch took %v; %v elapsed).\n", epoch+1, E, MatrixMagnitude(sh.G), lr, MeanMagnitude(sh.L), time.Now().Sub(t), time.Now().Sub(T))
 		// Write position of objects.
 		if output_prefix != "" {
 			sh.WriteLocations(fmt.Sprintf("%v.csv", output_prefix))
@@ -141,10 +141,10 @@ func (sh *Shoehorn) LearnRprop(initial_step_size float64, l2 float64, numepochs 
 		Uses gradient descent to find the best location for objects.
 	*/
 	var (
-		epoch int
-		E     float64
-		S, G  [][]float64
-		T, t  time.Time
+		epoch, o, d int
+		E           float64
+		S, G        [][]float64
+		T, t        time.Time
 	)
 	// Initialization.
 	T = time.Now()
@@ -158,17 +158,18 @@ func (sh *Shoehorn) LearnRprop(initial_step_size float64, l2 float64, numepochs 
 		// Calculate current error.
 		E = sh.CurrentError()
 		// Update positions using gradient descent.
-		S = sh.Rprop(S, G, sh.G, 1e-6, 1e-1)
-		for o := 0; o < sh.no; o++ {
-			for j := 0; j < sh.nd; j++ {
-				G[o][j] = sh.G[o][j]
+		sh.Rprop(S, G, sh.G, 1e-2, .1)
+		// Take snapshot of current gradient for use in next iteration.
+		for o = 0; o < sh.no; o++ {
+			for d = 0; d < sh.nd; d++ {
+				G[o][d] = sh.G[o][d]
 			}
 		}
 		// Report status.
-		fmt.Printf("Epoch %6d: E=%.8e G=%.8e S=%.8e D=%.8e (epoch took %v; %v elapsed).\n", epoch+1, E, MeanMagnitude(sh.G), MeanMagnitude(S), MeanMagnitude(sh.L), time.Now().Sub(t), time.Now().Sub(T))
+		fmt.Printf("Epoch %6d: E=%.8e G=%.8e S=%.8e D=%.8e (epoch took %v; %v elapsed).\n", epoch+1, E, MatrixMagnitude(sh.G), MeanMagnitude(S), MeanMagnitude(sh.L), time.Now().Sub(t), time.Now().Sub(T))
 		// Write position of objects.
 		if output_prefix != "" {
-			sh.WriteLocations(fmt.Sprintf("%v_%v.csv", output_prefix, epoch+1))
+			sh.WriteLocations(fmt.Sprintf("%v.csv", output_prefix))
 		}
 	}
 }
@@ -254,7 +255,10 @@ func (sh *Shoehorn) SetNeighbors() {
 				sh.ND[o1][o2] += math.Pow(sh.L[o1][d]-sh.L[o2][d], 2.)
 			}
 			sh.ND[o1][o2] = math.Sqrt(sh.ND[o1][o2])
+
 			sh.NW[o1][o2] = math.Exp(-sh.ND[o1][o2])
+			//sh.NW[o1][o2] = 1. / (1. + sh.ND[o1][o2])
+
 			// Set symmetric values.
 			sh.ND[o2][o1] = sh.ND[o1][o2]
 			sh.NW[o2][o1] = sh.NW[o1][o2]
@@ -338,16 +342,17 @@ func (sh *Shoehorn) SetErrors(l2 float64) {
 
 func (sh *Shoehorn) Error(object int, l2 float64, channel chan bool) {
 	var (
-		f int
+		f        int
+		distance float64
 	)
 	// Initialize error.
 	sh.E[object] = 0.
 	// Compute reconstruction error for object.
 	for f = 0; f < sh.nf; f++ {
-		sh.E[object] += math.Pow(sh.O[object][f]-(sh.WP[object][f] / sh.W[object]), 2.)
+		sh.E[object] += math.Pow(sh.O[object][f]-(sh.WP[object][f]/sh.W[object]), 2.)
 	}
-	// Account for L2 punishment.
-	distance := VectorMagnitude(sh.L[object])
+	// Add L2 punishment to error.
+	distance = VectorMagnitude(sh.L[object])
 	sh.E[object] += l2 * distance
 	// Signal completion.
 	channel <- true
@@ -363,8 +368,7 @@ func (sh *Shoehorn) CurrentError() (E float64) {
 
 func (sh *Shoehorn) TotalEnergy(l2 float64) (E float64) {
 	sh.SetErrors(l2)
-	E = sh.CurrentError()
-	return
+	return sh.CurrentError()
 }
 
 //
@@ -394,58 +398,59 @@ func (sh *Shoehorn) SetGradients(l2 float64) {
 
 func (sh *Shoehorn) Gradient(object int, l2 float64, channel chan bool) {
 	var (
-		o, d, f                                                           int
-		E, g, h, g_other, h_other, gprime_other, hprime_other, tmp1, tmp2 float64
-		gprime, hprime, G                                                 []float64
+		o, no, d, nd, f, nf                             int
+		E, g, h, tmp1, tmp2, tmpother float64
+		G, gprime, hprime                               []float64
 	)
-	G = make([]float64, sh.nd)
-	gprime = make([]float64, sh.nd)
-	hprime = make([]float64, sh.nd)
+	// Initializations.
+	no = sh.no
+	nd = sh.nd
+	nf = sh.nf
+	G = make([]float64, nd)
+	gprime = make([]float64, nd)
+	hprime = make([]float64, nd)
 	// Compute gradient information for each feature.
-	for f = 0; f < sh.nf; f++ {
+	for f = 0; f < nf; f++ {
 		// Reset gradient terms (they are computed on a per-feature basis).
-		for d = 0; d < sh.nd; d++ {
+		for d = 0; d < nd; d++ {
 			gprime[d], hprime[d] = 0., 0.
 		}
 		g = sh.WP[object][f]
 		h = sh.W[object]
-		for o = 0; o < sh.no; o++ {
+		for o = 0; o < no; o++ {
 			if o != object {
-				// tmp1 = sh.NW[object][o] / sh.ND[object][o]
-				tmp1 = 1. / ((1. + sh.ND[object][o]) * (1. + sh.ND[object][o]) * sh.ND[object][o])
-				g_other = sh.WP[o][f]
-				h_other = sh.W[o]
-				for d = 0; d < sh.nd; d++ {
+				tmp1 = sh.NW[object][o] / sh.ND[object][o]
+				// tmp1 = 1. / ((1. + sh.ND[object][o]) * (1. + sh.ND[object][o]) * sh.ND[object][o])
+				tmpother = 2. * ((sh.WP[o][f] / sh.W[o]) - sh.O[o][f]) / (sh.W[o] * sh.W[o])
+				for d = 0; d < nd; d++ {
 					// Accumulate information about the impact of object's location on its own reconstruction error.
 					tmp2 = tmp1 * (sh.L[o][d] - sh.L[object][d])
 					gprime[d] += sh.O[o][f] * tmp2
 					hprime[d] += tmp2
 					// Update gradient information about the impact of object's location on the reconstruction error of object o.
-					gprime_other = sh.O[object][f] * tmp2
-					hprime_other = tmp2
-					G[d] += 2. * ((g_other / h_other) - sh.O[o][f]) * ((gprime_other * h_other) - (g_other * hprime_other)) / (h_other * h_other)
+					G[d] += tmpother * tmp2 * ((sh.O[object][f] * sh.W[o]) - sh.WP[o][f])
 				}
 			}
 		}
 		// Update gradient.
 		tmp1 = 2. * ((g / h) - sh.O[object][f]) / (h * h)
-		for d = 0; d < sh.nd; d++ {
+		for d = 0; d < nd; d++ {
 			G[d] += tmp1 * ((gprime[d] * h) - (g * hprime[d]))
 		}
 		// Update error.
 		E += math.Pow(sh.O[object][f]-(g/h), 2.)
 	}
 	// Account for L2 punishment.
-	distance := VectorMagnitude(sh.L[object])
-	E += l2 * distance
-	for d = 0; d < sh.nd; d++ {
-		G[d] += l2 * sh.L[object][d] / distance
+	if l2 > 0. {
+		distance := VectorMagnitude(sh.L[object])
+		E += l2 * distance
+		for d = 0; d < nd; d++ {
+			G[d] += l2 * sh.L[object][d] / distance
+		}
 	}
-	// Set the error and gradient on the shoehorn object.
+	// Set error and gradient information centrally.
 	sh.E[object] = E
-	for d = 0; d < sh.nd; d++ {
-		sh.G[object][d] = G[d]
-	}
+	sh.G[object] = G
 	// Signal completion.
 	channel <- true
 }
@@ -465,22 +470,13 @@ func (sh *Shoehorn) CopyGradient() (G [][]float64) {
 
 func (sh *Shoehorn) GradientDescent(learning_rate, momentum float64, U [][]float64) {
 	var (
-		o, d   int
-		u, mag, maxmag float64
+		o, d int
+		u    float64
 	)
-	// Scale gradients so largest has magnitude of 1.
-	maxmag = 0.
-	for o = 0; o < sh.no; o++ {
-		mag = VectorMagnitude(sh.G[o])
-		if mag > maxmag {
-			maxmag = mag
-		}
-	}
 	// Update locations.
 	for o = 0; o < sh.no; o++ {
-		// mag = VectorMagnitude(sh.G[o])
 		for d = 0; d < sh.nd; d++ {
-			u = (learning_rate * -sh.G[o][d] / maxmag) + (momentum * U[o][d])
+			u = (learning_rate * -sh.G[o][d]) + (momentum * U[o][d])
 			sh.L[o][d] += u
 			U[o][d] = u
 		}
@@ -488,20 +484,20 @@ func (sh *Shoehorn) GradientDescent(learning_rate, momentum float64, U [][]float
 	return
 }
 
-func (sh *Shoehorn) Rprop(S [][]float64, G0 [][]float64, G1 [][]float64, step_size_min float64, step_size_max float64) [][]float64 {
+func (sh *Shoehorn) Rprop(S [][]float64, G0 [][]float64, G1 [][]float64, step_size_min float64, step_size_max float64) {
 	var (
-		o, d  int
-		gprod float64
+		o, d           int
+		rescale, gprod float64
 	)
+	rescale = .99
 	for o = 0; o < len(G1); o++ {
 		for d = 0; d < len(G1[o]); d++ {
 			// Update the step size (consistent gradient directions get a boost, inconsistent directions get reduced).
 			gprod = G0[o][d] * G1[o][d]
 			if gprod > 0. {
-				S[o][d] *= 1.1
+				S[o][d] /= rescale
 			} else if gprod < 0. {
-				S[o][d] *= 0.5
-				G1[o][d] = 0.
+				S[o][d] *= rescale
 			}
 			// Apply caps.
 			if S[o][d] < step_size_min {
@@ -511,10 +507,13 @@ func (sh *Shoehorn) Rprop(S [][]float64, G0 [][]float64, G1 [][]float64, step_si
 				S[o][d] = step_size_max
 			}
 			// Update the position based on the sign of its magnitude and the learned step size (RProp doesn't use gradient magnitudes).
-			sh.L[o][d] -= math.Copysign(S[o][d], G1[o][d])
+			if math.Signbit(G1[o][d]) {
+				sh.L[o][d] += S[o][d]
+			} else {
+				sh.L[o][d] -= S[o][d]
+			}
 		}
 	}
-	return S
 }
 
 //
