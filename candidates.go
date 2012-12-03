@@ -27,16 +27,10 @@ func CandidateWormhole(object int, sigma float64, L [][]float64) (location []flo
 }
 
 func CandidateHybrid(object int, sigma float64, L [][]float64) (location []float64) {
-	location = make([]float64, len(L[object]))
 	if rand.Float64() < .5 {
-		for d := 0; d < len(L[object]); d++ {
-			location[d] = L[object][d] + (sigma * rand.NormFloat64())
-		}		
+		location = CandidateLocal(object, sigma, L)
 	} else {
-		target_object := rand.Intn(len(L))
-		for d := 0; d < len(L[object]); d++ {
-			location[d] = L[target_object][d] + (sigma * rand.NormFloat64())
-		}
+		location = CandidateWormhole(object, sigma, L)
 	}
 	return
 }

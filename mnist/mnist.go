@@ -12,6 +12,7 @@ func main() {
 	sh := shoehorn.NewShoehorn("../data/mnist_data_train.csv", 2, 0.005)
 	fmt.Printf("Took %v to create data set of %d objects exhibiting %d distinct features.\n", time.Now().Sub(t1), len(sh.O), len(sh.O[0]))
 
-	// sh.LearnGradientDescent(1e-6, 0, 2e5, 10000, "tmp/locations")
-	sh.LearnLineSearch(2., 2e5, 10000, "tmp/locations")
+	// sh.LearnRepositioning(1000000, "tmp/locations")
+	sh.LearnGradientDescent(1e-6, 0, 0, 10000, "tmp/locations")
+	// sh.LearnLineSearch(2., 2e5, 10000, "tmp/locations")
 }

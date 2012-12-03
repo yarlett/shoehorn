@@ -13,13 +13,13 @@ func (sh *Shoehorn) LearnRepositioning(epochs int, output_prefix string) {
 		l2, energy float64
 		TM, tm time.Time
 	)
-	l2 = 0.
+	l2 = 1e5
 	TM = time.Now()
 	// Perform learning.
 	energy = sh.TotalEnergy(l2)
 	for epoch = 0; epoch < epochs; epoch++ {
 		tm = time.Now()
-		energy = UpdaterGAT(energy, l2, sh)
+		energy = GenerateAndTestUpdater(energy, l2, sh)
 		// Write locations to file.
 		if output_prefix != "" {
 			sh.WriteLocations(fmt.Sprintf("%v.csv", output_prefix))
@@ -29,7 +29,7 @@ func (sh *Shoehorn) LearnRepositioning(epochs int, output_prefix string) {
 	}
 }
 
-func UpdaterGAT(current_energy, l2 float64, sh *Shoehorn) (energy float64) {
+func GenerateAndTestUpdater(current_energy, l2 float64, sh *Shoehorn) (energy float64) {
 	/*
 		Implements a generate-and-test location updater.
 	*/
@@ -38,7 +38,7 @@ func UpdaterGAT(current_energy, l2 float64, sh *Shoehorn) (energy float64) {
 		new_energy, sigma float64
 		curloc, newloc    []float64
 	)
-	sigma = 1.
+	sigma = .5
 	// Randomly select an object to update.
 	o = rand.Intn(sh.no)
 	// Save the current location of the object.
@@ -63,20 +63,18 @@ func (sh *Shoehorn) TotalEnergyWithRelocation(object int, l2 float64, location [
 		Relocates the specified object to the specified location, efficiently updates the internal representation of distances, weights and the object reconstructions, and returns the new global error.
 	*/
 	var (
-		o, d, f                    int
-		new_distance, new_weight   float64
-		old_distances, old_weights []float64
+		o, d, f                  int
+		new_distance, new_weight float64
+		old_weights              []float64
 	)
 	// Update location of object.
 	for d = 0; d < sh.nd; d++ {
 		sh.L[object][d] = location[d]
 	}
-	// Take a copy of the old distances and weights involving the object.
-	old_distances = make([]float64, sh.no)
+	// Take a copy of the old weights involving the object, while setting the new distances and weights.
 	old_weights = make([]float64, sh.no)
 	for o = 0; o < sh.no; o++ {
-		// Store the old distances and weights involving the object.
-		old_distances[o] = sh.ND[object][o]
+		// Store the old weights involving the object.
 		old_weights[o] = sh.NW[object][o]
 		// Compute the new distance and weight for the object.
 		new_distance = 0.
@@ -84,7 +82,10 @@ func (sh *Shoehorn) TotalEnergyWithRelocation(object int, l2 float64, location [
 			new_distance += math.Pow(sh.L[object][d]-sh.L[o][d], 2.)
 		}
 		new_distance = math.Sqrt(new_distance)
-		new_weight = math.Exp(-new_distance)
+
+		// new_weight = math.Exp(-new_distance)
+		new_weight = 1. / (1. + new_distance)
+
 		// Set these distances and weights in the internal representation.
 		sh.ND[object][o] = new_distance
 		sh.ND[o][object] = new_distance
@@ -101,12 +102,9 @@ func (sh *Shoehorn) TotalEnergyWithRelocation(object int, l2 float64, location [
 		if o != object {
 			// Update W for o.
 			sh.W[o] += sh.NW[object][o] - old_weights[o]
-			// Update WP.
 			for f = 0; f < sh.nf; f++ {
-				// Update WP for o.
-				sh.WP[o][f] += (sh.NW[object][o] - old_weights[o]) * sh.O[object][f]
-				// Update WP for object.
-				sh.WP[object][f] += sh.NW[object][o] * sh.O[o][f]
+				sh.WP[o][f] += (sh.NW[object][o] - old_weights[o]) * sh.O[object][f] // Update WP for o.
+				sh.WP[object][f] += sh.NW[object][o] * sh.O[o][f] // Update WP for object.
 			}
 			// Update W for object.
 			sh.W[object] += sh.NW[object][o]
