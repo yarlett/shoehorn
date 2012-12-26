@@ -132,6 +132,18 @@ func MatrixMagnitude(M [][]float64) (magnitude float64) {
 	return
 }
 
+func MeanAbs(M [][]float64) (mean_abs float64) {
+	n := 0.
+	for i := 0; i < len(M); i++ {
+		for j := 0; j < len(M[i]); j++ {
+			mean_abs += math.Abs(M[i][j])
+			n++
+		}
+	}
+	mean_abs /= n
+	return
+}
+
 func ReturnMatrix(i, j int, initialval float64) (M [][]float64) {
 	M = make([][]float64, i)
 	for ii := 0; ii < i; ii++ {

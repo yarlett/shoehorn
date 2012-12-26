@@ -51,7 +51,13 @@ func TestGradient(t *testing.T) {
 	h = 1e-4 // Step size used when approximating gradient.
 	// Compute and save gradient information for objects.
 	sh.SetGradients(L2)
-	G = sh.CopyGradient()
+	G = make([][]float64, sh.no)
+	for o = 0; o < sh.no; o++ {
+		G[o] = make([]float64, sh.nd)
+		for d = 0; d < sh.nd; d++ {
+			G[o][d] = sh.G[o][d]
+		}
+	}
 	// Iterate over the position of each object in each dimension.
 	for o = 0; o < sh.no; o++ {
 		for d = 0; d < sh.nd; d++ {

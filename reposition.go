@@ -10,26 +10,28 @@ import (
 func (sh *Shoehorn) LearnRepositioning(epochs int, output_prefix string) {
 	var (
 		epoch  int
-		l2, energy float64
+		energy float64
 		TM, tm time.Time
 	)
-	l2 = 1e5
 	TM = time.Now()
 	// Perform learning.
-	energy = sh.TotalEnergy(l2)
+	energy = sh.TotalEnergy()
 	for epoch = 0; epoch < epochs; epoch++ {
 		tm = time.Now()
-		energy = GenerateAndTestUpdater(energy, l2, sh)
+		energy = GenerateAndTestUpdater(energy, sh)
 		// Write locations to file.
-		if output_prefix != "" {
-			sh.WriteLocations(fmt.Sprintf("%v.csv", output_prefix))
+		if epoch % 100 == 0 {
+			// Write locations to CSV.
+			if output_prefix != "" {
+				sh.WriteLocations(fmt.Sprintf("%v.csv", output_prefix))
+			}
+			// Report status.
+			fmt.Printf("Epoch %d: Energy=%.6e (took %v; %v elapsed).\n", epoch, energy, time.Now().Sub(tm), time.Now().Sub(TM))
 		}
-		// Report status.
-		fmt.Printf("Epoch %d: Energy=%.6e (took %v; %v elapsed).\n", epoch, energy, time.Now().Sub(tm), time.Now().Sub(TM))
 	}
 }
 
-func GenerateAndTestUpdater(current_energy, l2 float64, sh *Shoehorn) (energy float64) {
+func GenerateAndTestUpdater(current_energy float64, sh *Shoehorn) (energy float64) {
 	/*
 		Implements a generate-and-test location updater.
 	*/
@@ -38,7 +40,7 @@ func GenerateAndTestUpdater(current_energy, l2 float64, sh *Shoehorn) (energy fl
 		new_energy, sigma float64
 		curloc, newloc    []float64
 	)
-	sigma = .5
+	sigma = 1.
 	// Randomly select an object to update.
 	o = rand.Intn(sh.no)
 	// Save the current location of the object.
@@ -48,17 +50,17 @@ func GenerateAndTestUpdater(current_energy, l2 float64, sh *Shoehorn) (energy fl
 	}
 	// Generate a new location for the object.
 	newloc = CandidateHybrid(o, sigma, sh.L)
-	new_energy = sh.TotalEnergyWithRelocation(o, l2, newloc)
+	new_energy = sh.TotalEnergyWithRelocation(o, newloc)
 	// Decide whether to keep new location.
 	if new_energy < current_energy {
 		energy = new_energy
 	} else {
-		energy = sh.TotalEnergyWithRelocation(o, l2, curloc)
+		energy = sh.TotalEnergyWithRelocation(o, curloc)
 	}
 	return
 }
 
-func (sh *Shoehorn) TotalEnergyWithRelocation(object int, l2 float64, location []float64) (E float64) {
+func (sh *Shoehorn) TotalEnergyWithRelocation(object int, location []float64) (E float64) {
 	/*
 		Relocates the specified object to the specified location, efficiently updates the internal representation of distances, weights and the object reconstructions, and returns the new global error.
 	*/
@@ -82,10 +84,7 @@ func (sh *Shoehorn) TotalEnergyWithRelocation(object int, l2 float64, location [
 			new_distance += math.Pow(sh.L[object][d]-sh.L[o][d], 2.)
 		}
 		new_distance = math.Sqrt(new_distance)
-
-		// new_weight = math.Exp(-new_distance)
-		new_weight = 1. / (1. + new_distance)
-
+		new_weight = math.Exp(-new_distance)
 		// Set these distances and weights in the internal representation.
 		sh.ND[object][o] = new_distance
 		sh.ND[o][object] = new_distance
@@ -112,12 +111,9 @@ func (sh *Shoehorn) TotalEnergyWithRelocation(object int, l2 float64, location [
 	}
 	// Compute error.
 	for o = 0; o < sh.no; o++ {
+		// Discrepancy between object and its reconstruction.
 		for f = 0; f < sh.nf; f++ {
 			E += math.Pow(sh.O[o][f]-(sh.WP[o][f]/sh.W[o]), 2.)
-		}
-		// L2 punishment.
-		for d = 0; d < sh.nd; d++ {
-			E += l2 * sh.L[o][d] * sh.L[o][d]
 		}
 	}
 	E /= float64(sh.no)
