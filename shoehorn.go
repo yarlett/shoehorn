@@ -105,7 +105,7 @@ func (sh *Shoehorn) Create(S [][]string, ndims int) {
 // Learn methods. Performs gradient-descent on object locations.
 //
 
-func (sh *Shoehorn) LearnGradientDescent(lr, mom, decay, mini_batch_prob, noise float64, numepochs int, output_prefix string) {
+func (sh *Shoehorn) LearnGradientDescent(lr, mom, l2, mini_batch_prob float64, numepochs int, output_prefix string) {
 	/*
 		Uses gradient descent to find the best location for objects.
 	*/
@@ -124,24 +124,24 @@ func (sh *Shoehorn) LearnGradientDescent(lr, mom, decay, mini_batch_prob, noise 
 		// Get initial error and gradient for all objects.
 		sh.SetGradients(mini_batch_prob)
 		E = sh.CurrentError()
-
-
-		// Update positions using gradient descent.
-		sh.GradientDescent(lr, mom, noise, U)
-
-		noise *= .999
-
-
-		// Weight decay.
+		// Add L2 terms to error and gradient.
 		for o := 0; o < sh.no; o++ {
+			// Get distance of o from origin.
+			distance := 0.
 			for d := 0; d < sh.nd; d++ {
-				sh.L[o][d] *= decay
+				distance += (sh.L[o][d] * sh.L[o][d])
+			}
+			distance = math.Sqrt(distance)
+			// Update gradient.
+			E += l2 * distance
+			for d := 0; d < sh.nd; d++ {
+				sh.G[o][d] += l2 * sh.L[o][d] / distance
 			}
 		}
-
-
+		// Update positions using gradient descent.
+		sh.GradientDescent(lr, mom, U)
 		// Report status.
-		fmt.Printf("Epoch %6d: E=%.6e G=%.6e D=%.6e lr=%.6e mom=%.6e noise=%.6e (epoch took %v; %v elapsed).\n", epoch+1, E, MeanAbs(sh.G), MeanAbs(sh.L), lr, mom, noise, time.Now().Sub(t), time.Now().Sub(T))
+		fmt.Printf("Epoch %6d: E=%.6e G=%.6e D=%.6e lr=%.6e mom=%.6e l2=%.6e (epoch took %v; %v elapsed).\n", epoch+1, E, MeanAbs(sh.G), MeanAbs(sh.L), lr, mom, l2, time.Now().Sub(t), time.Now().Sub(T))
 		// Write position of objects.
 		if output_prefix != "" {
 			sh.WriteLocations(fmt.Sprintf("%v.csv", output_prefix))
@@ -303,7 +303,6 @@ func (sh *Shoehorn) CurrentError() (E float64) {
 	for o := 0; o < len(sh.E); o++ {
 		E += sh.E[o]
 	}
-	E /= float64(sh.no)
 	return
 }
 
@@ -367,7 +366,6 @@ func (sh *Shoehorn) Gradient(object int, O []int, channel chan bool) {
 		g = sh.WP[object][f]
 		h = sh.W[object]
 		for _, o = range O {
-		//for o = 0; o < no; o++ {
 			if (o != object) {
 				tmp1 = sh.NW[object][o] / sh.ND[object][o] // exponential decay
 				// tmp1 = 1. / ((1. + sh.ND[object][o]) * (1. + sh.ND[object][o]) * sh.ND[object][o]) // power decay
@@ -421,7 +419,7 @@ func (sh *Shoehorn) GetSingleGradient(object int) (G []float64) {
 
 // Gradient descent methods.
 
-func (sh *Shoehorn) GradientDescent(learning_rate, momentum, noise float64, U [][]float64) {
+func (sh *Shoehorn) GradientDescent(learning_rate, momentum float64, U [][]float64) {
 	var (
 		o, d   int
 		update float64
@@ -430,7 +428,6 @@ func (sh *Shoehorn) GradientDescent(learning_rate, momentum, noise float64, U []
 	for o = 0; o < sh.no; o++ {
 		for d = 0; d < sh.nd; d++ {
 			update = (learning_rate * -sh.G[o][d]) + (momentum * U[o][d])
-			update += noise * rand.NormFloat64()
 			sh.L[o][d] += update
 			U[o][d] = update
 		}
@@ -555,6 +552,29 @@ func (sh *Shoehorn) Rescale(radius float64) {
 		}
 	}
 	return
+}
+
+func (sh *Shoehorn) TransformData() {
+	var (
+		f, o int
+		mn float64
+	)
+	for f = 0; f < sh.nf; f++ {
+		// Log transform the feature values.
+		for o = 0; o < sh.no; o++ {
+			sh.O[o][f] = math.Log(1. + sh.O[o][f])
+		}
+		// Compute the mean value for the feature.
+		mn = 0.
+		for o = 0; o < sh.no; o++ {
+			mn += sh.O[o][f]
+		}
+		mn /= float64(sh.no)
+		// Mean center the feature values.
+		for o = 0; o < sh.no; o++ {
+			sh.O[o][f] -= mn
+		}
+	}
 }
 
 func (sh *Shoehorn) WriteLocations(path string) {
