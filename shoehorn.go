@@ -194,14 +194,16 @@ func (sh *Shoehorn) LearnRprop(initial_step_size, min_step_size, max_step_size f
 func (sh *Shoehorn) SetNeighbors() {
 	var (
 		o1, o2, d int
+		tmp       float64
 	)
 	// Set neighbor information (capitalizing on symmetry of distances and weights).
 	for o1 = 0; o1 < sh.no; o1++ {
-		for o2 = 0; o2 <= o1; o2++ {
+		for o2 = 0; o2 < o1; o2++ {
 			// Calculate distance and weight.
 			sh.ND[o1][o2] = 0.
 			for d = 0; d < sh.nd; d++ {
-				sh.ND[o1][o2] += math.Pow(sh.L[o1][d]-sh.L[o2][d], 2.)
+				tmp = sh.L[o1][d] - sh.L[o2][d]
+				sh.ND[o1][o2] += tmp * tmp
 			}
 			sh.ND[o1][o2] = math.Sqrt(sh.ND[o1][o2])
 			sh.NW[o1][o2] = math.Exp(-sh.ND[o1][o2])
@@ -351,7 +353,6 @@ func (sh *Shoehorn) Gradient(object int, O []int, channel chan bool) {
 		G, gprime, hprime             []float64
 	)
 	// Initializations.
-	//no = sh.no
 	nd = sh.nd
 	nf = sh.nf
 	G = make([]float64, nd)
@@ -405,9 +406,7 @@ func (sh *Shoehorn) GetSingleGradient(object int) (G []float64) {
 	sh.SetReconstructions()
 	// Set single gradient.
 	channel := make(chan bool, 1)
-	
 	O := make([]int, 0)
-
 	sh.Gradient(object, O, channel)
 	// Get gradient and return it.
 	G = make([]float64, len(sh.G[object]))
@@ -426,6 +425,7 @@ func (sh *Shoehorn) GradientDescent(learning_rate, momentum float64, U [][]float
 	)
 	// Update locations.
 	for o = 0; o < sh.no; o++ {
+		// gmag = VectorMagnitude(sh.G[o])
 		for d = 0; d < sh.nd; d++ {
 			update = (learning_rate * -sh.G[o][d]) + (momentum * U[o][d])
 			sh.L[o][d] += update
@@ -447,7 +447,7 @@ func (sh *Shoehorn) Rprop(S [][]float64, G0 [][]float64, G1 [][]float64, step_si
 			if gprod > 0. {
 				S[o][d] *= 1.01
 			} else if gprod < 0. {
-				S[o][d] *= .5
+				S[o][d] *= 0.5
 			}
 			// Apply caps.
 			if S[o][d] < step_size_min {
@@ -557,7 +557,7 @@ func (sh *Shoehorn) Rescale(radius float64) {
 func (sh *Shoehorn) TransformData() {
 	var (
 		f, o int
-		mn float64
+		mn, sd float64
 	)
 	for f = 0; f < sh.nf; f++ {
 		// Log transform the feature values.
@@ -570,11 +570,38 @@ func (sh *Shoehorn) TransformData() {
 			mn += sh.O[o][f]
 		}
 		mn /= float64(sh.no)
+		// Calculate standard deviation.
+		sd = 0.
+		for o = 0; o < sh.no; o++ {
+			sd += math.Pow(sh.O[o][f]-mn, 2.)
+		}
+		if sd > 0. {
+			sd = math.Sqrt(sd)
+		} else {
+			sd = 1.
+		}
 		// Mean center the feature values.
 		for o = 0; o < sh.no; o++ {
 			sh.O[o][f] -= mn
 		}
+		// // Divide by standard deviation.
+		// for o = 0; o < sh.no; o++ {
+		// 	sh.O[o][f] /= sd
+		// }
 	}
+}
+
+func (sh *Shoehorn) FindLearningRate(step_size float64) (lr float64) {
+	sh.SetGradients(1.)
+	max_mag := 0.
+	for o := 0; o < sh.no; o++ {
+		mag := VectorMagnitude(sh.G[o])
+		if mag > max_mag {
+			max_mag = mag
+		}
+	}
+	lr = step_size / max_mag
+	return
 }
 
 func (sh *Shoehorn) WriteLocations(path string) {

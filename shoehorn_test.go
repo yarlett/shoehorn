@@ -11,7 +11,7 @@ import (
 var (
 	NDIMS int     = 2
 	ALPHA float64 = 0.01
-	L2    float64 = 1.
+	L2    float64 = 0.
 )
 
 // Returns a Shoehorn object initialized with some test data.
@@ -50,7 +50,7 @@ func TestGradient(t *testing.T) {
 	sh = GetTestData(50, 3)
 	h = 1e-4 // Step size used when approximating gradient.
 	// Compute and save gradient information for objects.
-	sh.SetGradients(L2)
+	sh.SetGradients(1.)
 	G = make([][]float64, sh.no)
 	for o = 0; o < sh.no; o++ {
 		G[o] = make([]float64, sh.nd)
@@ -63,12 +63,12 @@ func TestGradient(t *testing.T) {
 		for d = 0; d < sh.nd; d++ {
 			// Calculate error at x - h.
 			sh.L[o][d] -= h
-			sh.SetErrors(L2)
-			Enh = sh.CurrentError() * float64(sh.no)
+			sh.SetErrors()
+			Enh = sh.CurrentError()
 			// Calculate error at x + h.
 			sh.L[o][d] += 2. * h
-			sh.SetErrors(L2)
-			Eh = sh.CurrentError() * float64(sh.no)
+			sh.SetErrors()
+			Eh = sh.CurrentError()
 			// Reset x to original position.
 			sh.L[o][d] -= h
 			// Calculate approximate gradient.
